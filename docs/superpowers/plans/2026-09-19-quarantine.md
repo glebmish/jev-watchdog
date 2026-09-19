@@ -267,7 +267,9 @@ class Decider:
             answer = verdict.answers.get(rule.id)
             if answer is None or isinstance(answer.value, str):
                 continue
-            evidence = max(0.0, state.evidence.get(rule.id, 0.0) + answer.value - rule.quarantine_ref)
+            evidence = max(
+                0.0, state.evidence.get(rule.id, 0.0) + answer.value - rule.quarantine_ref
+            )
             state.evidence[rule.id] = evidence
             if evidence >= rule.quarantine_limit and state.trip is None:
                 state.trip = Trip(rule.id, answer.value, evidence, rule.quarantine_limit)
@@ -545,9 +547,7 @@ async def test_release_forgets_the_evidence(make_payload, out):
     await registry.shutdown()
 
 
-async def test_targets_must_match_exactly_one_known_surface(
-    make_payload, subagent_transcript, out
-):
+async def test_targets_must_match_exactly_one_known_surface(make_payload, subagent_transcript, out):
     registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.0}]))
     registry.handle(make_payload("SessionStart"))
     registry.handle(make_payload("SubagentStart", agent_id="agent-abc123", agent_type="Explore"))
@@ -583,27 +583,29 @@ In `tests/test_printer.py` add one test asserting the three new lines' text and 
 `printer.py`:
 
 ```python
-    def quarantine(self, label: str, source: str, reason: str, enforced: bool) -> None:
-        line = self._prefix(label)
-        if enforced:
-            line.append(f"QUARANTINED by {source}: {reason}", style="bold white on red")
-        else:
-            line.append(f"{source} would quarantine: {reason}", style="bold red")
-        self.console.print(line, soft_wrap=True)
-        self._log("quarantine", label, source=source, reason=reason, enforced=enforced)
+def quarantine(self, label: str, source: str, reason: str, enforced: bool) -> None:
+    line = self._prefix(label)
+    if enforced:
+        line.append(f"QUARANTINED by {source}: {reason}", style="bold white on red")
+    else:
+        line.append(f"{source} would quarantine: {reason}", style="bold red")
+    self.console.print(line, soft_wrap=True)
+    self._log("quarantine", label, source=source, reason=reason, enforced=enforced)
 
-    def rejected(self, label: str, payload: dict, reason: str) -> None:
-        line = self._prefix(label)
-        line.append(f"{'rejected':<18} ", style="bold red")
-        line.append(_event_detail("PreToolUse", payload))
-        self.console.print(line, soft_wrap=True)
-        self._log("rejected", label, payload=payload, reason=reason)
 
-    def released(self, label: str) -> None:
-        line = self._prefix(label)
-        line.append("released from quarantine", style="bold green")
-        self.console.print(line, soft_wrap=True)
-        self._log("released", label)
+def rejected(self, label: str, payload: dict, reason: str) -> None:
+    line = self._prefix(label)
+    line.append(f"{'rejected':<18} ", style="bold red")
+    line.append(_event_detail("PreToolUse", payload))
+    self.console.print(line, soft_wrap=True)
+    self._log("rejected", label, payload=payload, reason=reason)
+
+
+def released(self, label: str) -> None:
+    line = self._prefix(label)
+    line.append("released from quarantine", style="bold green")
+    self.console.print(line, soft_wrap=True)
+    self._log("released", label)
 ```
 
 `global_summary` text gains `f" · quarantines {stats.quarantines} · rejected {stats.rejected}"` before the cost.
@@ -633,53 +635,60 @@ In `_judge`, after recording the verdict:
 ```
 
 ```python
-    def _tripped(self, surface: Surface, judge: Judge, trip: Trip) -> None:
-        enforced = self.enforce and judge is self.judges[0]
-        if enforced:
-            enforced = self._add(surface, trip.describe(), f"rule:{judge.name}")
-        if not enforced:
-            self.printer.quarantine(surface.label, judge.name, trip.describe(), enforced=False)
+def _tripped(self, surface: Surface, judge: Judge, trip: Trip) -> None:
+    enforced = self.enforce and judge is self.judges[0]
+    if enforced:
+        enforced = self._add(surface, trip.describe(), f"rule:{judge.name}")
+    if not enforced:
+        self.printer.quarantine(surface.label, judge.name, trip.describe(), enforced=False)
 
-    def _add(self, surface: Surface, reason: str, source: str) -> bool:
-        entry = Quarantine(surface.key, surface.label, reason, source, self.printer.clock())
-        if not self.quarantines.add(entry):
-            return False
-        self.stats.quarantines += 1
-        self.printer.quarantine(surface.label, source, reason, enforced=True)
-        return True
 
-    def quarantine(self, target: str, reason: str) -> Quarantine:
-        surface = self._resolve(target)
-        if not self._add(surface, reason, "manual"):
-            raise TargetError(409, f"{surface.label} is already quarantined")
-        return self.quarantines.blocking(surface.key)
+def _add(self, surface: Surface, reason: str, source: str) -> bool:
+    entry = Quarantine(surface.key, surface.label, reason, source, self.printer.clock())
+    if not self.quarantines.add(entry):
+        return False
+    self.stats.quarantines += 1
+    self.printer.quarantine(surface.label, source, reason, enforced=True)
+    return True
 
-    def release(self, target: str) -> Quarantine:
-        surface = self._resolve(target)
-        entry = self.quarantines.release(surface.key)
-        if entry is None:
-            raise TargetError(404, f"{surface.label} is not quarantined")
-        self.decider.reset(surface.key)
-        self.printer.released(surface.label)
-        return entry
 
-    def _resolve(self, target: str) -> Surface:
-        session, _, agent = target.strip().partition("/")
-        agent = agent.partition(":")[0] or MAIN
-        matches = [
-            surface
-            for key, surface in self.surfaces.items()
-            if session and key.session_id.startswith(session) and (
-                key.agent_id == MAIN if agent == MAIN
-                else key.agent_id != MAIN and key.agent_id.removeprefix("agent-").startswith(agent)
-            )
-        ]
-        if not matches:
-            raise TargetError(404, f"no agent thread matches {target!r}")
-        if len(matches) > 1:
-            labels = ", ".join(sorted(surface.label for surface in matches))
-            raise TargetError(409, f"{target!r} is ambiguous: {labels}")
-        return matches[0]
+def quarantine(self, target: str, reason: str) -> Quarantine:
+    surface = self._resolve(target)
+    if not self._add(surface, reason, "manual"):
+        raise TargetError(409, f"{surface.label} is already quarantined")
+    return self.quarantines.blocking(surface.key)
+
+
+def release(self, target: str) -> Quarantine:
+    surface = self._resolve(target)
+    entry = self.quarantines.release(surface.key)
+    if entry is None:
+        raise TargetError(404, f"{surface.label} is not quarantined")
+    self.decider.reset(surface.key)
+    self.printer.released(surface.label)
+    return entry
+
+
+def _resolve(self, target: str) -> Surface:
+    session, _, agent = target.strip().partition("/")
+    agent = agent.partition(":")[0] or MAIN
+    matches = [
+        surface
+        for key, surface in self.surfaces.items()
+        if session
+        and key.session_id.startswith(session)
+        and (
+            key.agent_id == MAIN
+            if agent == MAIN
+            else key.agent_id != MAIN and key.agent_id.removeprefix("agent-").startswith(agent)
+        )
+    ]
+    if not matches:
+        raise TargetError(404, f"no agent thread matches {target!r}")
+    if len(matches) > 1:
+        labels = ", ".join(sorted(surface.label for surface in matches))
+        raise TargetError(409, f"{target!r} is ambiguous: {labels}")
+    return matches[0]
 ```
 
 (`quarantine()` returns the surface's own entry: use `self.quarantines.blocking` only after a successful `_add`, so it is that entry.) `replay.py`: `record(...)` takes the extra `tripped` argument (used in Task 6).
@@ -739,32 +748,34 @@ async def test_control_errors_are_json(aiohttp_client, registry, path, body, sta
 - [ ] **Step 3: Implement** `server.py`: `hooks` returns `web.json_response(body)` when `registry.handle(payload)` is not `None`; add
 
 ```python
-    async def listing(request: web.Request) -> web.Response:
-        entries = [entry.as_dict() for entry in registry.quarantines.all()]
-        return web.json_response({"quarantined": entries})
+async def listing(request: web.Request) -> web.Response:
+    entries = [entry.as_dict() for entry in registry.quarantines.all()]
+    return web.json_response({"quarantined": entries})
 
-    def control(action):
-        async def handler(request: web.Request) -> web.Response:
-            try:
-                body = json.loads(await request.read())
-            except ValueError:
-                body = None
-            if not isinstance(body, dict) or not isinstance(body.get("target"), str):
-                return web.json_response({"error": 'expected {"target": "…"}'}, status=400)
-            try:
-                entry = action(body)
-            except TargetError as exc:
-                return web.json_response({"error": exc.message}, status=exc.status)
-            return web.json_response(entry.as_dict())
 
-        return handler
+def control(action):
+    async def handler(request: web.Request) -> web.Response:
+        try:
+            body = json.loads(await request.read())
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or not isinstance(body.get("target"), str):
+            return web.json_response({"error": 'expected {"target": "…"}'}, status=400)
+        try:
+            entry = action(body)
+        except TargetError as exc:
+            return web.json_response({"error": exc.message}, status=exc.status)
+        return web.json_response(entry.as_dict())
 
-    app.router.add_get("/quarantine", listing)
-    app.router.add_post(
-        "/quarantine",
-        control(lambda b: registry.quarantine(b["target"], str(b.get("reason") or "manual"))),
-    )
-    app.router.add_post("/release", control(lambda b: registry.release(b["target"])))
+    return handler
+
+
+app.router.add_get("/quarantine", listing)
+app.router.add_post(
+    "/quarantine",
+    control(lambda b: registry.quarantine(b["target"], str(b.get("reason") or "manual"))),
+)
+app.router.add_post("/release", control(lambda b: registry.release(b["target"])))
 ```
 
 Update the module docstring (no longer observe-only). `hooks.json`: add
