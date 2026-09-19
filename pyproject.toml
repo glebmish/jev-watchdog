@@ -1,7 +1,7 @@
 [project]
 name = "jev-watchdog"
 version = "0.1.0"
-description = "Observe-only watchdog that judges Claude Code agent threads with Jev on every hook event."
+description = "Watchdog that judges Claude Code agent threads with Jev on every hook event and quarantines them on accumulated evidence."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
