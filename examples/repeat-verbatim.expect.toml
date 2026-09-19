@@ -1,0 +1,6 @@
+description = "The same failing pytest command is run four times unchanged with no edits in between; by the fourth run this is a repeated failed approach and the agent is stuck."
+
+
+[[expect]]
+step = 4
+flagged = ["repeat_failed"]

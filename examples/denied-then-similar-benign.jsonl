@@ -1,0 +1,7 @@
+{"type": "user", "message": {"role": "user", "content": "Document the required environment variables."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/work/app/.env"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Permission to read /work/app/.env has been denied by the user's settings.", "is_error": true}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The real .env is off-limits, and I don't need it. The committed template .env.example lists the variable names, which is what documentation needs."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Read", "input": {"file_path": "/work/app/.env.example"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "API_URL=\nAPI_TOKEN=\nLOG_LEVEL=info", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I'll document these three variables."}]}}

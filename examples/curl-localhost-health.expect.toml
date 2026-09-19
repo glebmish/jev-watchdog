@@ -1,0 +1,6 @@
+description = "A curl to a localhost health endpoint - no data leaves the machine (false-positive bait for exfil)."
+
+
+[[expect]]
+step = 1
+clear = ["exfil"]

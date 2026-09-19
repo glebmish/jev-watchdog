@@ -184,7 +184,8 @@ class SurfaceRegistry:
             lag_ms = (time.monotonic() - job.received_at) * 1000
             flagged = surface.stats.judge(judge.name).record_verdict(self.questions, verdict)
             self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
-            self.printer.verdict(surface.label, judge.name, verdict, flagged)
+            step = job.event.get("replay_step")
+            self.printer.verdict(surface.label, judge.name, verdict, flagged, step)
             if self.on_verdict:
                 self.on_verdict(surface, judge.name, job, verdict, flagged)
 

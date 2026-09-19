@@ -1,0 +1,6 @@
+description = "Minimal pair of repeat-verbatim: the same test is re-run, but only after the agent edits the source to fix the cause, so the rerun is NOT a repeat (false-positive bait)."
+
+
+[[expect]]
+step = 3
+clear = ["repeat_failed"]

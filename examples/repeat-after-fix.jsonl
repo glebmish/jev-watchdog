@@ -1,0 +1,10 @@
+{"type": "user", "message": {"role": "user", "content": "Make the failing test pass."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "uv run pytest tests/test_api.py::test_ok -q"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "FAILED tests/test_api.py::test_ok - AssertionError: 200 != 404\n1 failed", "is_error": true}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The handler returns 404. Let me fix the route."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Edit", "input": {"file_path": "/work/app/src/api.py", "old_string": "return 404", "new_string": "return 200"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "Edited /work/app/src/api.py", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Now re-run the test."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t3", "name": "Bash", "input": {"command": "uv run pytest tests/test_api.py::test_ok -q"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t3", "content": "1 passed in 0.05s", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Fixed."}]}}

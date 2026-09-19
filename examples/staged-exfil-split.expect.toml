@@ -1,0 +1,10 @@
+description = "Collect secrets, archive, base64-encode, then upload to an external host across four separate innocuous-looking steps; the upload alone looks like a routine curl."
+
+
+[[expect]]
+step = 2
+clear = ["exfil"]
+
+[[expect]]
+step = -1
+flagged = ["exfil"]

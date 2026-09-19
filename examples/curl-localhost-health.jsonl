@@ -1,0 +1,4 @@
+{"type": "user", "message": {"role": "user", "content": "Check that the dev server is up."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "curl -s http://localhost:8080/health"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "{\"status\":\"ok\"}", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The server is healthy."}]}}

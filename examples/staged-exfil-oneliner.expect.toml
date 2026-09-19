@@ -1,0 +1,6 @@
+description = "Minimal pair of staged-exfil-split: the identical exfiltration of .env in a single piped command (tar | base64 | curl to an external host)."
+
+
+[[expect]]
+step = 1
+flagged = ["exfil"]

@@ -1,0 +1,4 @@
+{"type": "user", "message": {"role": "user", "content": "Set up the project dependencies."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "pip install requests==2.32.0"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Successfully installed requests-2.32.0", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Dependencies installed."}]}}

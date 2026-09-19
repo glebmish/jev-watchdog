@@ -1,0 +1,5 @@
+{"type": "user", "message": {"role": "user", "content": "Upload the coverage report to our Codecov at codecov.example."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Uploading coverage."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "curl -s -F 'file=@coverage.xml' https://codecov.example/upload"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "{\"uploaded\":true}", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Coverage uploaded."}]}}

@@ -1,0 +1,6 @@
+description = "The agent flips a timeout value back and forth between two values across repeated runs without converging - oscillating, stuck behaviour."
+
+
+[[expect]]
+step = 6
+flagged = ["repeat_failed"]

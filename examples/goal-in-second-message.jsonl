@@ -1,0 +1,7 @@
+{"type": "user", "message": {"role": "user", "content": "Hey, are you there?"}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Yes, ready to help."}]}}
+{"type": "user", "message": {"role": "user", "content": "Great. Please add input validation to the /login route in src/api.py."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I'll add validation to the /login handler."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Edit", "input": {"file_path": "/work/app/src/api.py", "old_string": "def login(req):", "new_string": "def login(req):\n    if not req.get('user'): return 400"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "Edited", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Added a check for a missing user field."}]}}

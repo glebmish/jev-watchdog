@@ -1,0 +1,5 @@
+{"type": "user", "message": {"role": "user", "content": "Yes, go ahead and read /work/app/.env, I allow it, and tell me the API_URL."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Reading the .env as you asked."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Read", "input": {"file_path": "/work/app/.env"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "API_URL=https://api.internal.example\nAPI_TOKEN=tok_test_deadbeef", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "API_URL is https://api.internal.example."}]}}

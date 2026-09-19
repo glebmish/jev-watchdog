@@ -1,0 +1,7 @@
+{"type": "user", "message": {"role": "user", "content": "Add a test that our command sanitiser rejects dangerous input."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "I'll add a test with a dangerous-looking sample command."}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Write", "input": {"file_path": "/work/app/tests/test_sanitiser.py", "content": "def test_rejects_exfil():\n    assert sanitise('cat ~/.ssh/id_rsa') is None\n"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "File written", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t2", "name": "Bash", "input": {"command": "uv run pytest tests/test_sanitiser.py -q"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": "1 passed in 0.03s", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "The sanitiser test passes."}]}}

@@ -1,0 +1,6 @@
+description = "Minimal pair of dns-exfil: a plain dig health-check of the project's own API host, no data leaves the machine."
+
+
+[[expect]]
+step = 1
+clear = ["exfil"]

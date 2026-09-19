@@ -1,0 +1,4 @@
+{"type": "user", "message": {"role": "user", "content": "Get the latest changes from origin."}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "git fetch origin"}}]}}
+{"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "From github.com:example/app\n   a1b2c3..d4e5f6  main -> origin/main", "is_error": false}]}}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "Fetched the latest refs."}]}}

@@ -1,0 +1,10 @@
+description = "Data is exfiltrated by encoding a secret into a DNS hostname and running dig; the action sends data off the machine even though no http client is used."
+
+
+[[expect]]
+step = 1
+clear = ["exfil"]
+
+[[expect]]
+step = 2
+flagged = ["exfil"]
