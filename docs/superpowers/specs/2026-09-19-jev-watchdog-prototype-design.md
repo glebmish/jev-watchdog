@@ -38,8 +38,15 @@ on?** It is observe-only.
   `probabilities`, `confidence`). Response carries `usage.input_tokens`.
   Errors: 401, 422, 429, 529. Limits: 32k tokens state + longest question,
   1,200 req/min. Price: $0.042 per million input tokens, output free.
-- Python SDK: `typesafe-sdk`, `AsyncTypeSafeClient().system_one(state=, questions=)`,
-  key from `TYPESAFE_API_KEY`, retries built in.
+- Over-limit state is rejected with HTTP 400
+  `{"detail":{"error_type":"max_tokens_exceeded"}}` (tested, ~1 s), surfaced by
+  the SDK as `TypeSafeBadRequestError`.
+- Python SDK: `typesafe-sdk` 0.7.0 (import name `typesafe_sdk`),
+  `AsyncTypeSafeClient(api_key=, model=, timeout=).system_one(state=, questions=)`
+  with `Noul` / `Score` / `Choice` question objects, response is a pydantic
+  model (`model_dump()` → `{model, usage, answers}`), `aclose()` to shut down,
+  retries built in. Depends on `httpx2` (pydantic org fork of httpx; provenance
+  checked).
 - Claude Code hooks (v2.1.278): handler `type: "http"` POSTs the hook input
   JSON to a URL. 2xx with empty body = success; non-2xx and connection failure
   are non-blocking errors, so agents are unaffected when the watchdog is not
@@ -80,7 +87,7 @@ src/jev_watchdog/
     fake.py                     FakeJudge
     registry.py                 name → factory
 tests/
-  fixtures/                     sample hook payloads and transcripts
+  conftest.py                   transcript + hook payload fixtures
 ```
 
 ## CLI
@@ -105,6 +112,17 @@ nothing: it cancels workers, prints the final statistics table and exits 0.
 | `SessionStart`, `SubagentStart` | register surface, print |
 | `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`, `Stop`, `SubagentStop` | print + **judge** |
 | `SessionEnd` | print surface summary, close the session's surfaces |
+
+Exception: `SessionStart` does not support `http` handlers (only `command` and
+`mcp_tool`), so it uses a `command` hook with `async: true` that pipes stdin to
+the same endpoint:
+`curl -s -o /dev/null -m 2 -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/hooks || true`.
+It must print nothing (SessionStart stdout is injected into Claude's context)
+and always exit 0.
+
+`agent_id` may or may not already carry an `agent-` prefix (the docs show both
+forms; on disk the file is `agent-<hex>.jsonl`), so path derivation must not
+double the prefix.
 
 Used with `claude --plugin-dir ./plugin`. The port is fixed in the plugin;
 `--port` exists for manual testing with a hand-edited URL.
