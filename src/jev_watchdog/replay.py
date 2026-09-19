@@ -126,7 +126,7 @@ async def run_cases(
 ) -> list[Finding]:
     flagged: dict[tuple[str, str, int], set[str]] = {}
 
-    def record(surface, judge, job, verdict, flagged_ids) -> None:
+    def record(surface, judge, job, verdict, flagged_ids, tripped) -> None:
         flagged[(job.event["session_id"], judge, job.event["replay_step"])] = flagged_ids
 
     registry.on_verdict = record

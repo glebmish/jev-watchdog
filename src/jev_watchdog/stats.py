@@ -1,4 +1,4 @@
-"""Read-only accumulators. Nothing here triggers an action."""
+"""Read-only accumulators. Nothing here triggers an action; decide.py does that."""
 
 import math
 from collections import Counter
@@ -138,6 +138,8 @@ class GlobalStats:
     events: Counter[str] = field(default_factory=Counter)
     errors: Counter[str] = field(default_factory=Counter)  # not tied to a judge
     judges: dict[str, JudgeStats] = field(default_factory=dict)
+    quarantines: int = 0
+    rejected: int = 0  # tool calls of quarantined threads
 
     def record_event(self, name: str) -> None:
         self.events[name] += 1

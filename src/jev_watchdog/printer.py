@@ -80,6 +80,28 @@ class Printer:
         self.console.print(line, soft_wrap=True)
         self._log("note", label, message=message)
 
+    def quarantine(self, label: str, source: str, reason: str, enforced: bool) -> None:
+        line = self._prefix(label)
+        if enforced:
+            line.append(f"QUARANTINED by {source}: {reason}", style="bold white on red")
+        else:
+            line.append(f"{source} would quarantine: {reason}", style="bold red")
+        self.console.print(line, soft_wrap=True)
+        self._log("quarantine", label, source=source, reason=reason, enforced=enforced)
+
+    def rejected(self, label: str, payload: dict, reason: str) -> None:
+        line = self._prefix(label)
+        line.append(f"{'rejected':<18} ", style="bold red")
+        line.append(_event_detail("PreToolUse", payload))
+        self.console.print(line, soft_wrap=True)
+        self._log("rejected", label, payload=payload, reason=reason)
+
+    def released(self, label: str) -> None:
+        line = self._prefix(label)
+        line.append("released from quarantine", style="bold green")
+        self.console.print(line, soft_wrap=True)
+        self._log("released", label)
+
     def surface_summary(self, label: str, stats: SurfaceStats, judge: str | None = None) -> None:
         """One table per judge for this surface, or only `judge`'s table."""
         for name, judge_stats in stats.judges.items():
@@ -95,6 +117,7 @@ class Printer:
             Text(
                 f"surfaces {stats.surfaces} · events {sum(stats.events.values())}"
                 f" · judgments {stats.judgments} · errors {_counter(stats.errors)}"
+                f" · quarantines {stats.quarantines} · rejected {stats.rejected}"
                 f" · ${stats.cost_usd:.4f}",
                 style="bold",
             ),

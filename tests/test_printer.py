@@ -140,7 +140,10 @@ def test_global_summary_compares_judges():
     assert "latency p50" in text and "lag p95" in text
     assert "291ms" in text and "5280ms" in text and "9100ms" in text
     assert "$0.0420" in text and "$0.0087" in text and "timeout×1" in text
-    assert "surfaces 1 · events 1 · judgments 2 · errors transcript×1 · $0.0507" in text
+    assert (
+        "surfaces 1 · events 1 · judgments 2 · errors transcript×1 · quarantines 0 · rejected 0 · $0.0507"
+        in text
+    )
 
 
 def test_works_without_a_log_file():
@@ -188,3 +191,29 @@ def test_verdict_log_record_carries_the_replay_step():
     printer.verdict("case/main", "jev", Verdict({}, 1.0, 1, "jev"), flagged=set(), step=3)
     printer.verdict("live/main", "jev", Verdict({}, 1.0, 1, "jev"), flagged=set())
     assert [record["step"] for record in records(log)] == [3, None]
+
+
+def test_quarantine_lines_and_log_records():
+    printer, out, log = make_printer()
+    reason = "exfil=0.93 (evidence 0.48 ≥ 0.20)"
+    printer.quarantine("1d8e7c/main", "rule:jev", reason, enforced=True)
+    printer.quarantine("1d8e7c/main", "claude", reason, enforced=False)
+    payload = {
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": "ls"},
+    }
+    printer.rejected("1d8e7c/main", payload, reason)
+    printer.released("1d8e7c/main")
+    lines = out.getvalue().splitlines()
+    assert f"QUARANTINED by rule:jev: {reason}" in lines[0]
+    assert f"claude would quarantine: {reason}" in lines[1]
+    assert "rejected" in lines[2] and "Bash ls" in lines[2]
+    assert "released from quarantine" in lines[3]
+    assert [(r["kind"], r.get("enforced")) for r in records(log)] == [
+        ("quarantine", True),
+        ("quarantine", False),
+        ("rejected", None),
+        ("released", None),
+    ]
+    assert records(log)[2]["payload"] == payload

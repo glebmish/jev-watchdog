@@ -2,14 +2,21 @@ import asyncio
 import io
 
 import pytest
-from conftest import SESSION_ID, TRANSCRIPT_LINES
+from conftest import SESSION_ID, TRANSCRIPT_LINES, ScriptedJudge
 from rich.console import Console
 
 from jev_watchdog.judge.base import JudgeRequest, Verdict
 from jev_watchdog.judge.fake import FakeJudge
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
-from jev_watchdog.surfaces import ALL_EVENTS, JUDGING_EVENTS, LIFECYCLE_EVENTS, SurfaceRegistry
+from jev_watchdog.surfaces import (
+    ALL_EVENTS,
+    GATE_EVENTS,
+    JUDGING_EVENTS,
+    LIFECYCLE_EVENTS,
+    SurfaceRegistry,
+    TargetError,
+)
 from jev_watchdog.transcript import MAIN, SurfaceKey
 
 QUESTIONS = [Question("exfil", "noul", "i", flag_threshold=0.7)]
@@ -27,7 +34,8 @@ def make_registry(judge, out, *more_judges) -> SurfaceRegistry:
 
 def test_event_sets():
     assert not LIFECYCLE_EVENTS & JUDGING_EVENTS
-    assert len(ALL_EVENTS) == 9
+    assert not GATE_EVENTS & (LIFECYCLE_EVENTS | JUDGING_EVENTS)
+    assert len(ALL_EVENTS) == 10
 
 
 async def test_one_surface_per_agent_thread(make_payload, subagent_transcript, out):
@@ -282,3 +290,118 @@ async def test_session_end_prints_one_summary_per_judge(make_payload, out):
 def test_judge_names_must_be_unique(out):
     with pytest.raises(ValueError, match="duplicate judge"):
         make_registry(FakeJudge(), out, FakeJudge())
+
+
+RULED = [Question("exfil", "noul", "i", flag_threshold=0.55, quarantine_ref=0.45,
+                  quarantine_limit=0.2)]  # fmt: skip
+
+
+def ruled_registry(out, *judges, enforce=True) -> SurfaceRegistry:
+    console = Console(file=out, width=200, color_system=None)
+    return SurfaceRegistry(list(judges), RULED, Printer(console), enforce=enforce)
+
+
+def deny_of(body) -> str:
+    assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
+    return body["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+async def test_tool_calls_pass_until_a_verdict_trips_then_every_one_is_rejected(make_payload, out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.93}]))
+    assert registry.handle(make_payload("PreToolUse", tool_name="Bash")) is None
+    registry.handle(make_payload("PostToolUse", tool_name="Bash", tool_use_id="t1"))
+    await registry.drain()
+    for tool_name in ("Bash", "Read", "mcp__x__y"):
+        reason = deny_of(registry.handle(make_payload("PreToolUse", tool_name=tool_name)))
+        assert "exfil=0.93" in reason
+    assert registry.stats.quarantines == 1 and registry.stats.rejected == 3
+    assert "QUARANTINED" in out.getvalue() and "rejected" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_dry_run_reports_but_never_rejects(make_payload, out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.93}]), enforce=False)
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await registry.drain()
+    assert registry.handle(make_payload("PreToolUse")) is None
+    assert "would quarantine" in out.getvalue() and registry.quarantines.all() == []
+    await registry.shutdown()
+
+
+async def test_only_the_first_judge_decides(make_payload, out):
+    calm, alarmed = ScriptedJudge([{"exfil": 0.1}], "calm"), ScriptedJudge([{"exfil": 1.0}], "loud")
+    registry = ruled_registry(out, calm, alarmed)
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await registry.drain()
+    assert registry.handle(make_payload("PreToolUse")) is None
+    assert "loud would quarantine" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_a_quarantined_subagent_does_not_block_its_parent(
+    make_payload, subagent_transcript, out
+):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.93}]))
+    registry.handle(make_payload("PostToolUse", agent_id="abc123", agent_type="Explore",
+                                 tool_use_id="t1"))  # fmt: skip
+    await registry.drain()
+    assert registry.handle(make_payload("PreToolUse", agent_id="abc123")) is not None
+    assert registry.handle(make_payload("PreToolUse")) is None
+    await registry.shutdown()
+
+
+async def test_manual_quarantine_of_main_blocks_subagents_and_release_lifts_it(
+    make_payload, subagent_transcript, out
+):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.0}]), enforce=False)
+    registry.handle(make_payload("SessionStart"))
+    entry = registry.quarantine(SESSION_ID[:6], "testing")
+    assert (entry.source, entry.label) == ("manual", f"{SESSION_ID[:6]}/main")
+    assert "testing" in deny_of(registry.handle(make_payload("PreToolUse", agent_id="abc123")))
+    assert registry.release(f"{SESSION_ID[:6]}/main") == entry
+    assert registry.handle(make_payload("PreToolUse", agent_id="abc123")) is None
+    await registry.shutdown()
+
+
+async def test_release_forgets_the_evidence(make_payload, out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.93}, {"exfil": 0.5}]))
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await registry.drain()
+    registry.release(SESSION_ID[:6])
+    registry.handle(make_payload("PostToolUse", tool_use_id="t2"))
+    await registry.drain()
+    assert registry.handle(make_payload("PreToolUse")) is None  # 0.05 of evidence, not 0.53
+    await registry.shutdown()
+
+
+async def test_targets_must_match_exactly_one_known_surface(make_payload, subagent_transcript, out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.0}]))
+    registry.handle(make_payload("SessionStart"))
+    registry.handle(make_payload("SubagentStart", agent_id="agent-abc123", agent_type="Explore"))
+    assert registry.quarantine(f"{SESSION_ID[:6]}/abc1:Explore", "r").key.agent_id == "agent-abc123"
+    for target, status in (("nope", 404), ("", 404), (f"{SESSION_ID[:6]}/zzz", 404)):
+        with pytest.raises(TargetError) as error:
+            registry.quarantine(target, "r")
+        assert error.value.status == status
+    with pytest.raises(TargetError) as error:
+        registry.quarantine(f"{SESSION_ID[:6]}/abc1", "again")
+    assert error.value.status == 409
+    with pytest.raises(TargetError) as error:
+        registry.release(SESSION_ID[:6])  # main is not quarantined
+    assert error.value.status == 404
+    await registry.shutdown()
+
+
+async def test_the_gate_never_raises_on_bad_payloads(out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.0}]))
+    assert registry.handle({"hook_event_name": "PreToolUse"}) is None
+    assert registry.stats.errors == {"payload": 1}
+
+
+async def test_an_ambiguous_target_is_a_conflict(make_payload, out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.0}]))
+    registry.handle(make_payload("SessionStart"))
+    registry.handle(make_payload("SessionStart") | {"session_id": "0999"})
+    with pytest.raises(TargetError) as error:
+        registry.quarantine("0", "r")
+    assert error.value.status == 409 and "ambiguous" in error.value.message

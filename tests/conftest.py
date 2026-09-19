@@ -1,5 +1,7 @@
 import pytest
 
+from jev_watchdog.judge.base import Answer, Verdict
+
 SESSION_ID = "0123456789abcdef"
 TRANSCRIPT_LINES = [
     '{"type":"user","message":"fix the test"}',
@@ -38,3 +40,19 @@ def subagent_transcript(transcript):
     path.parent.mkdir(parents=True)
     path.write_text('{"type":"user","message":"explore"}\n', encoding="utf-8")
     return path
+
+
+class ScriptedJudge:
+    """Answers the n-th judgment with values[n]; the last entry repeats."""
+
+    def __init__(self, values: list[dict[str, float]], name: str = "scripted") -> None:
+        self.name, self.values, self.calls = name, values, []
+
+    async def judge(self, req) -> Verdict:
+        self.calls.append(req)
+        values = self.values[min(len(self.calls), len(self.values)) - 1]
+        answers = {qid: Answer(value) for qid, value in values.items()}
+        return Verdict(answers, latency_ms=0.0, input_tokens=0, judge=self.name)
+
+    async def aclose(self) -> None:
+        pass

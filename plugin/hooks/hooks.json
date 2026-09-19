@@ -1,5 +1,5 @@
 {
-  "description": "Forward hook events to jev-watchdog on 127.0.0.1:8787 (observe-only).",
+  "description": "Forward hook events to jev-watchdog on 127.0.0.1:8787; PreToolUse lets it reject tool calls of quarantined threads.",
   "hooks": {
     "SessionStart": [
       {
@@ -13,6 +13,9 @@
       }
     ],
     "UserPromptSubmit": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "PreToolUse": [
       { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
     ],
     "PostToolUse": [

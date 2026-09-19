@@ -1,6 +1,7 @@
 import io
 
 import pytest
+from conftest import SESSION_ID
 from rich.console import Console
 
 from jev_watchdog.judge.fake import FakeJudge
@@ -35,3 +36,39 @@ async def test_malformed_payloads_still_get_an_empty_200(aiohttp_client, registr
     assert await response.read() == b""
     assert registry.stats.errors == {"payload": 1}
     assert registry.surfaces == {}
+
+
+async def test_quarantine_roundtrip_over_http(aiohttp_client, registry, make_payload):
+    client = await aiohttp_client(create_app(registry))
+    await client.post("/hooks", json=make_payload("SessionStart"))
+    target = f"{SESSION_ID[:6]}/main"
+
+    response = await client.post("/quarantine", json={"target": SESSION_ID[:6], "reason": "test"})
+    assert response.status == 200 and (await response.json())["target"] == target
+    listed = await (await client.get("/quarantine")).json()
+    assert [entry["reason"] for entry in listed["quarantined"]] == ["test"]
+
+    response = await client.post("/hooks", json=make_payload("PreToolUse", tool_name="Bash"))
+    body = await response.json()
+    assert response.status == 200
+    assert body["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    assert (await client.post("/release", json={"target": target})).status == 200
+    response = await client.post("/hooks", json=make_payload("PreToolUse", tool_name="Bash"))
+    assert await response.read() == b""
+    await registry.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "status"),
+    [
+        ("/quarantine", {"target": "nope"}, 404),
+        ("/release", {"target": "nope"}, 404),
+        ("/release", {}, 400),
+        ("/quarantine", [1], 400),
+    ],
+)
+async def test_control_errors_are_json(aiohttp_client, registry, path, body, status):
+    client = await aiohttp_client(create_app(registry))
+    response = await client.post(path, json=body)
+    assert response.status == status and "error" in await response.json()
