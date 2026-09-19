@@ -12,7 +12,7 @@ from pathlib import Path
 from aiohttp import web
 from rich.console import Console
 
-from jev_watchdog.judge.registry import JUDGES, JudgeConfig, make_judge
+from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
 from jev_watchdog.pack import PackError, load_pack
 from jev_watchdog.printer import Printer
 from jev_watchdog.server import create_app
@@ -30,13 +30,40 @@ def build_parser() -> argparse.ArgumentParser:
         "run", help="listen for hooks in the foreground and judge every event"
     )
     run.add_argument("--port", type=int, default=DEFAULT_PORT)
-    run.add_argument("--judge", choices=sorted(JUDGES), default="jev")
+    run.add_argument(
+        "--judge",
+        action=_AppendReplacingDefault,
+        default=["jev"],
+        type=_judge_spec,
+        metavar="NAME[:MODEL]",
+        help=f"judge backend, one of {sorted(JUDGES)}, optionally with a model, e.g. "
+        "claude:claude-haiku-4-5. Repeat to run several side by side. Default: jev",
+    )
+    run.add_argument(
+        "--claude-thinking",
+        action="store_true",
+        help="leave thinking on for claude judges (default: off, like a non-reasoning judge)",
+    )
     run.add_argument("--pack", type=Path, default=Path("pack.toml"))
     run.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     run.add_argument(
         "--log", type=Path, default=None, help="run log path (default runs/<timestamp>.jsonl)"
     )
     return parser
+
+
+class _AppendReplacingDefault(argparse.Action):
+    """Like `append`, but the first explicit value replaces the default instead of joining it."""
+
+    def __call__(self, parser, namespace, value, option_string=None):
+        current = getattr(namespace, self.dest)
+        setattr(namespace, self.dest, [value] if current is self.default else [*current, value])
+
+
+def _judge_spec(spec: str) -> str:
+    if backend_of(spec) not in JUDGES:
+        raise argparse.ArgumentTypeError(f"unknown judge {spec!r}; available: {sorted(JUDGES)}")
+    return spec
 
 
 def resolve_api_key(env: Mapping[str, str], key_file: Path) -> str:
@@ -54,15 +81,21 @@ def main(argv: list[str] | None = None) -> int:
         questions = load_pack(args.pack)
     except (OSError, PackError) as exc:
         raise SystemExit(f"cannot load pack {args.pack}: {exc}") from exc
-    api_key = resolve_api_key(os.environ, args.key_file) if args.judge == "jev" else None
-    judge = make_judge(args.judge, JudgeConfig(api_key=api_key))
+    if len(set(args.judge)) != len(args.judge):
+        raise SystemExit(f"--judge given more than once with the same value: {args.judge}")
+    needs_key = any(backend_of(spec) == "jev" for spec in args.judge)
+    config = JudgeConfig(
+        api_key=resolve_api_key(os.environ, args.key_file) if needs_key else None,
+        thinking=args.claude_thinking,
+    )
+    judges = [make_judge(spec, config) for spec in args.judge]
     log_path = args.log or Path("runs") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
         printer = Printer(Console(), log_file)
-        registry = SurfaceRegistry(judge, questions, printer)
+        registry = SurfaceRegistry(judges, questions, printer)
         banner = (
-            f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judge={args.judge}"
+            f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={','.join(judge.name for judge in judges)}"
             f" · {len(questions)} questions · log={log_path} · Ctrl-C to stop"
         )
         return asyncio.run(_serve(registry, printer, args.port, banner))
@@ -89,7 +122,8 @@ async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner:
     finally:
         await registry.shutdown()
         await runner.cleanup()
-        await registry.judge.aclose()
+        for judge in registry.judges:
+            await judge.aclose()
         if listening:
             printer.global_summary(registry.stats, registry.summaries())
 

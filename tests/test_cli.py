@@ -8,7 +8,8 @@ from jev_watchdog.cli import DEFAULT_PORT, build_parser, resolve_api_key
 def test_run_defaults():
     args = build_parser().parse_args(["run"])
     assert args.port == DEFAULT_PORT == 8787
-    assert args.judge == "jev"
+    assert args.judge == ["jev"]
+    assert args.claude_thinking is False
     assert args.pack == Path("pack.toml")
     assert args.key_file == Path("prototype-throwaway-key")
     assert args.log is None
@@ -18,12 +19,8 @@ def test_run_overrides():
     args = build_parser().parse_args(
         ["run", "--port", "9000", "--judge", "fake", "--pack", "p.toml", "--log", "out.jsonl"]
     )
-    assert (args.port, args.judge, args.pack, args.log) == (
-        9000,
-        "fake",
-        Path("p.toml"),
-        Path("out.jsonl"),
-    )
+    assert args.judge == ["fake"]
+    assert (args.port, args.pack, args.log) == (9000, Path("p.toml"), Path("out.jsonl"))
 
 
 def test_unknown_judge_is_rejected():
@@ -62,10 +59,31 @@ async def test_port_in_use_exits_1_without_a_summary(capsys):
 
     out = io.StringIO()
     printer = Printer(Console(file=out, width=200, color_system=None))
-    registry = SurfaceRegistry(FakeJudge(), [], printer)
+    registry = SurfaceRegistry([FakeJudge()], [], printer)
     with socket.socket() as busy:
         busy.bind(("127.0.0.1", 0))
         busy.listen()
         assert await _serve(registry, printer, busy.getsockname()[1], "banner") == 1
     assert "cannot listen on 127.0.0.1" in capsys.readouterr().err
     assert out.getvalue() == ""
+
+
+def test_judge_is_repeatable_and_takes_a_model():
+    args = build_parser().parse_args(
+        ["run", "--judge", "jev", "--judge", "claude:claude-haiku-4-5", "--claude-thinking"]
+    )
+    assert args.judge == ["jev", "claude:claude-haiku-4-5"]
+    assert args.claude_thinking is True
+
+
+def test_duplicate_judges_are_rejected():
+    from jev_watchdog.cli import main
+
+    with pytest.raises(SystemExit) as err:
+        main(["run", "--judge", "fake", "--judge", "fake"])
+    assert "more than once" in str(err.value)
+
+
+def test_unknown_backend_in_a_spec_is_rejected():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "--judge", "gpt:4"])

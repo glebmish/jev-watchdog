@@ -20,9 +20,9 @@ def out():
     return io.StringIO()
 
 
-def make_registry(judge, out) -> SurfaceRegistry:
+def make_registry(judge, out, *more_judges) -> SurfaceRegistry:
     console = Console(file=out, width=200, color_system=None)
-    return SurfaceRegistry(judge, QUESTIONS, Printer(console))
+    return SurfaceRegistry([judge, *more_judges], QUESTIONS, Printer(console))
 
 
 def test_event_sets():
@@ -64,7 +64,7 @@ async def test_judges_only_judging_events_with_raw_transcript(make_payload, out)
     assert request.event["tool_name"] == "Bash"
     assert registry.stats.judgments == 1
     assert registry.surfaces[request.surface].stats.judgments == 1
-    assert "verdict" in out.getvalue()
+    assert " fake " in out.getvalue()
     await registry.shutdown()
 
 
@@ -120,9 +120,11 @@ async def test_judge_error_is_counted_and_worker_survives(make_payload, out):
     registry.handle(make_payload())
     await registry.drain()
     surface = registry.surfaces[SurfaceKey(SESSION_ID, MAIN)]
-    assert surface.stats.errors == {"over_limit": 1} and surface.stats.judgments == 1
-    assert registry.stats.errors == {"over_limit": 1}
-    assert "judge error over_limit" in out.getvalue()
+    assert surface.stats.judges["fake"].errors == {"over_limit": 1}
+    assert surface.stats.judgments == 1
+    assert registry.stats.judges["fake"].errors == {"over_limit": 1}
+    assert registry.stats.errors == {}
+    assert "fake error over_limit" in out.getvalue()
     await registry.shutdown()
 
 
@@ -140,7 +142,7 @@ async def test_unexpected_judge_exception_does_not_kill_worker(make_payload, out
     registry.handle(make_payload())
     await registry.drain()
     surface = registry.surfaces[SurfaceKey(SESSION_ID, MAIN)]
-    assert surface.stats.errors == {"other": 1} and surface.stats.judgments == 1
+    assert surface.stats.judges["fake"].errors == {"other": 1} and surface.stats.judgments == 1
     await registry.shutdown()
 
 
@@ -201,7 +203,7 @@ async def test_session_end_summarises_and_surface_can_resume(make_payload, out):
     await registry.drain()
     await asyncio.sleep(0)  # let the worker exit after its sentinel
     surface = registry.surfaces[SurfaceKey(SESSION_ID, MAIN)]
-    assert surface.worker.done()
+    assert all(worker.done() for worker in surface.workers.values())
     assert "judgments 1" in out.getvalue()
 
     registry.handle(make_payload())  # session resumed
@@ -225,3 +227,58 @@ async def test_summaries_are_keyed_by_label(make_payload, out):
     await registry.drain()
     assert list(registry.summaries()) == ["012345/main"]
     await registry.shutdown()
+
+
+async def test_every_judge_sees_every_job_and_is_tracked_separately(make_payload, out):
+    fast, slow = FakeJudge(name="fast"), FakeJudge(latency_s=0.05, name="slow")
+    registry = make_registry(fast, out, slow)
+    registry.handle(make_payload())
+    registry.handle(make_payload())
+    await registry.drain()
+    assert len(fast.calls) == len(slow.calls) == 2
+    assert fast.calls[0].transcript_lines is slow.calls[0].transcript_lines  # one snapshot
+    stats = registry.stats
+    assert list(stats.judges) == ["fast", "slow"]
+    assert stats.judges["fast"].judgments == stats.judges["slow"].judgments == 2
+    surface = registry.surfaces[SurfaceKey(SESSION_ID, MAIN)]
+    assert list(surface.stats.judges) == ["fast", "slow"]
+    assert " fast " in out.getvalue() and " slow " in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_a_slow_judge_does_not_hold_back_a_fast_one(make_payload, out):
+    fast, slow = FakeJudge(name="fast"), FakeJudge(latency_s=0.2, name="slow")
+    registry = make_registry(fast, out, slow)
+    for _ in range(3):
+        registry.handle(make_payload())
+    await asyncio.sleep(0.05)
+    assert registry.stats.judge("fast").judgments == 3
+    assert registry.stats.judge("slow").judgments == 0
+    await registry.shutdown()
+
+
+async def test_lag_includes_time_queued_behind_earlier_events(make_payload, out):
+    slow = FakeJudge(latency_s=0.05, name="slow")
+    registry = make_registry(slow, out)
+    for _ in range(3):
+        registry.handle(make_payload())
+    await registry.drain()
+    lags = registry.stats.judges["slow"].lags_ms
+    assert lags[0] >= 50 and lags[2] >= 150  # third job waited for the first two
+    assert lags == sorted(lags)
+    await registry.shutdown()
+
+
+async def test_session_end_prints_one_summary_per_judge(make_payload, out):
+    registry = make_registry(FakeJudge(name="fast"), out, FakeJudge(name="slow"))
+    registry.handle(make_payload())
+    registry.handle(make_payload("SessionEnd", reason="clear"))
+    await registry.drain()
+    assert "· fast · judgments 1" in out.getvalue()
+    assert "· slow · judgments 1" in out.getvalue()
+    await registry.shutdown()
+
+
+def test_judge_names_must_be_unique(out):
+    with pytest.raises(ValueError, match="duplicate judge"):
+        make_registry(FakeJudge(), out, FakeJudge())

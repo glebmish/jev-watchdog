@@ -7,17 +7,19 @@ import typesafe_sdk as ts
 from jev_watchdog.judge.base import Answer, JudgeError, JudgeRequest, Verdict
 from jev_watchdog.pack import Question
 
+DEFAULT_MODEL = "jev-latest"
+PRICE_PER_MTOK_USD = 0.042  # input tokens; output is free
+
 
 class JevJudge:
-    name = "jev"
-
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "jev-latest",
+        model: str = DEFAULT_MODEL,
         timeout_s: float = 30.0,
         client: ts.AsyncTypeSafeClient | None = None,
     ) -> None:
+        self.name = "jev" if model == DEFAULT_MODEL else f"jev:{model}"
         self._client = client or ts.AsyncTypeSafeClient(
             api_key=api_key, model=model, timeout=timeout_s
         )
@@ -38,12 +40,14 @@ class JevJudge:
             raise JudgeError(kind, message) from exc
         latency_ms = (time.perf_counter() - started) * 1000
         raw = response.model_dump()
+        input_tokens = (raw.get("usage") or {}).get("input_tokens")
         return Verdict(
             answers={qid: _to_answer(answer) for qid, answer in raw["answers"].items()},
             latency_ms=latency_ms,
-            input_tokens=(raw.get("usage") or {}).get("input_tokens"),
+            input_tokens=input_tokens,
             judge=raw.get("model") or self.name,
             raw=raw,
+            cost_usd=(input_tokens or 0) / 1_000_000 * PRICE_PER_MTOK_USD,
         )
 
     async def aclose(self) -> None:

@@ -45,7 +45,7 @@ def test_event_detail_per_event_type():
     assert "Explore" in text and "clear" in text
 
 
-def test_verdict_line_marks_flagged_answers():
+def test_verdict_line_names_the_judge_and_marks_flagged_answers():
     printer, out, log = make_printer()
     verdict = Verdict(
         {
@@ -57,53 +57,90 @@ def test_verdict_line_marks_flagged_answers():
         input_tokens=4100,
         judge="jev-1.13.0",
     )
-    printer.verdict("012345/main", verdict, flagged={"exfil", "activity"})
+    printer.verdict("012345/main", "jev", verdict, flagged={"exfil", "activity"})
     line = out.getvalue()
-    assert "verdict" in line and "612ms" in line and "4.1k tok" in line
+    assert "jev" in line and "612ms" in line and "4.1k tok" in line
     assert "exfil=0.95!" in line and "activity=off_task!" in line
     assert "goal_drift=2.88" in line and "goal_drift=2.88!" not in line
     record = records(log)[0]
-    assert record["kind"] == "verdict" and record["flagged"] == ["activity", "exfil"]
+    assert record["kind"] == "verdict" and record["judge"] == "jev"
+    assert record["flagged"] == ["activity", "exfil"]
     assert record["verdict"]["answers"]["exfil"]["value"] == 0.95
 
 
-def test_error_line():
+def test_error_lines_with_and_without_a_judge():
     printer, out, log = make_printer()
-    printer.error("012345/main", "over_limit", "state exceeds [32k] tokens")
-    assert "judge error over_limit: state exceeds [32k] tokens" in out.getvalue()
-    assert records(log)[0] == {
-        "ts": "2026-09-19T15:02:11",
-        "kind": "error",
-        "surface": "012345/main",
-        "error_kind": "over_limit",
-        "message": "state exceeds [32k] tokens",
-    }
-
-
-def test_summaries_render():
-    printer, out, _ = make_printer()
-    questions = [
-        Question("exfil", "noul", "i", flag_threshold=0.7),
-        Question(
-            "activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)
-        ),
+    printer.error("012345/main", "over_limit", "state exceeds [32k] tokens", judge="jev")
+    printer.error("012345/main", "transcript", "is a directory")
+    text = out.getvalue()
+    assert "jev error over_limit: state exceeds [32k] tokens" in text
+    assert "error transcript: is a directory" in text
+    assert records(log) == [
+        {
+            "ts": "2026-09-19T15:02:11",
+            "kind": "error",
+            "surface": "012345/main",
+            "judge": "jev",
+            "error_kind": "over_limit",
+            "message": "state exceeds [32k] tokens",
+        },
+        {
+            "ts": "2026-09-19T15:02:11",
+            "kind": "error",
+            "surface": "012345/main",
+            "judge": None,
+            "error_kind": "transcript",
+            "message": "is a directory",
+        },
     ]
+
+
+QUESTIONS = [
+    Question("exfil", "noul", "i", flag_threshold=0.7),
+    Question("activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)),
+]
+
+
+def surface_with_two_judges() -> SurfaceStats:
     surface = SurfaceStats()
     surface.record_event("PostToolUse")
-    surface.record_verdict(
-        questions, Verdict({"exfil": Answer(0.9), "activity": Answer("stuck")}, 100, 10, "fake")
-    )
-    surface.record_error("timeout")
+    surface.record_error("transcript")
+    answers = {"exfil": Answer(0.9), "activity": Answer("stuck")}
+    surface.judge("jev").record_verdict(QUESTIONS, Verdict(answers, 300, 10, "jev-1.13.0"))
+    surface.judge("claude:haiku").record_verdict(QUESTIONS, Verdict(answers, 5000, 10, "haiku"))
+    surface.judge("claude:haiku").record_error("timeout")
+    return surface
+
+
+def test_surface_summary_has_a_table_per_judge():
+    printer, out, _ = make_printer()
+    printer.surface_summary("012345/main", surface_with_two_judges())
+    text = out.getvalue()
+    assert "012345/main · jev · judgments 1 · errors 0" in text
+    assert "012345/main · claude:haiku · judgments 1 · errors timeout×1" in text
+    assert "exfil" in text and "stuck×1" in text
+
+
+def test_surface_summary_can_be_limited_to_one_judge():
+    printer, out, _ = make_printer()
+    printer.surface_summary("012345/main", surface_with_two_judges(), judge="jev")
+    assert "· jev ·" in out.getvalue() and "claude:haiku" not in out.getvalue()
+
+
+def test_global_summary_compares_judges():
+    printer, out, _ = make_printer()
     stats = GlobalStats(surfaces=1)
     stats.record_event("PostToolUse")
-    stats.record_verdict(Verdict({}, 100, 1_000_000, "fake"))
-    stats.record_error("timeout")
-
-    printer.surface_summary("012345/main", surface)
-    printer.global_summary(stats, {"012345/main": surface})
+    stats.record_error("transcript")
+    stats.judge("jev").record_verdict(Verdict({}, 291, 1_000_000, "j", cost_usd=0.042), lag_ms=300)
+    stats.judge("claude:haiku").record_verdict(Verdict({}, 5280, 4000, "h", cost_usd=0.0087), 9100)
+    stats.judge("claude:haiku").record_error("timeout")
+    printer.global_summary(stats, {"012345/main": surface_with_two_judges()})
     text = out.getvalue()
-    assert "012345/main" in text and "exfil" in text and "stuck×1" in text
-    assert "timeout×1" in text and "$0.0420" in text and "p50" in text
+    assert "latency p50" in text and "lag p95" in text
+    assert "291ms" in text and "5280ms" in text and "9100ms" in text
+    assert "$0.0420" in text and "$0.0087" in text and "timeout×1" in text
+    assert "surfaces 1 · events 1 · judgments 2 · errors transcript×1 · $0.0507" in text
 
 
 def test_works_without_a_log_file():

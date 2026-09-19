@@ -16,6 +16,9 @@ every event and verdict and accumulates statistics. It never talks back to the a
 uv sync
 uv run jev-watchdog run                 # Jev judge; key from TYPESAFE_API_KEY or ./prototype-throwaway-key
 uv run jev-watchdog run --judge fake    # offline, deterministic answers
+
+# several judges side by side, to compare answers and latency
+uv run jev-watchdog run --judge jev --judge claude:claude-haiku-4-5 --judge claude:claude-sonnet-5
 ```
 
 In another terminal, start Claude Code with the hooks plugin:
@@ -28,16 +31,36 @@ If the watchdog is not running the hooks fail silently and Claude Code is unaffe
 `Ctrl-C` prints per-surface and global statistics. Every event, verdict and error
 is also appended to `runs/<timestamp>.jsonl`.
 
-Options: `--port` (default 8787; the plugin's URLs are fixed to 8787), `--judge jev|fake`,
-`--pack pack.toml`, `--key-file`, `--log`.
+Options: `--port` (default 8787; the plugin's URLs are fixed to 8787), `--judge NAME[:MODEL]`
+(repeatable), `--claude-thinking`, `--pack pack.toml`, `--key-file`, `--log`.
+
+## Judges
+
+| Spec | Backend | Auth |
+|---|---|---|
+| `jev`, `jev:jev-preview` | Jev via `typesafe-sdk` | `TYPESAFE_API_KEY` or the key file |
+| `claude`, `claude:<model-id>` | Claude via the Claude Agent SDK (default `claude-opus-5`) | your local Claude Code login; usage is billed to it |
+| `fake` | deterministic, offline | none |
+
+Every judge gets its own queue and worker per surface, so a slow judge never delays a fast
+one. Each verdict line names its judge; `Ctrl-C` prints a `judges` table with latency
+p50/p95/mean, **lag** (hook received → verdict ready, i.e. latency plus time queued behind
+earlier events of the same thread), tokens and cost.
+
+The Claude judge gets the same input as Jev and nothing else: an empty system prompt and
+Jev's request body (`{"state": [...lines], "questions": {...}}`) as the only message; a JSON
+schema built from the pack stands in for Jev's typed answers. Each judgment is a fresh
+one-shot session with no tools, no MCP servers, no settings/hooks/plugins and no session
+file, so it cannot act on what it reads or re-trigger the watchdog. Thinking is off unless
+`--claude-thinking` is given.
 
 ## Output
 
 ```
 15:02:11 a1b2c3/main                PostToolUse        Bash
-15:02:12 a1b2c3/main                verdict 612ms 4.1k tok  exfil=0.95! serves_goal=0.02! goal_drift=2.88! activity=off_task!
+15:02:12 a1b2c3/main                jev 612ms 4.1k tok  exfil=0.95! serves_goal=0.02! goal_drift=2.88! activity=off_task!
 15:02:12 a1b2c3/def456:Explore      SubagentStart      Explore
-15:02:13 a1b2c3/main                judge error over_limit: ...
+15:02:13 a1b2c3/main                jev error over_limit: ...
 ```
 
 `!` marks an answer past its flag threshold.
@@ -61,15 +84,16 @@ arrives before the transcript has any conversation in it just registers the surf
 ## Plugging in another judge
 
 Implement the `Judge` protocol in `src/jev_watchdog/judge/base.py`
-(`async judge(JudgeRequest) -> Verdict`, `async aclose()`), add a factory to
-`JUDGES` in `src/jev_watchdog/judge/registry.py`, and select it with `--judge <name>`.
-Only `judge/jev.py` knows about the TypeSafe SDK.
+(`name`, `async judge(JudgeRequest) -> Verdict`, `async aclose()`), add a factory to
+`JUDGES` in `src/jev_watchdog/judge/registry.py`, and select it with `--judge <name>[:model]`.
+Each SDK is imported by exactly one module (`judge/jev.py`, `judge/claude_agent.py`).
+`request_payload()` in `judge/base.py` gives any free-form backend the same input as Jev.
 
 ## Tests
 
 ```bash
 uv run pytest            # offline
-uv run pytest -m live    # two real Jev calls; needs a key
+uv run pytest -m live    # real Jev calls (needs a key) and real Claude calls (needs a login)
 ```
 
 ## First run (2026-09-19)
@@ -110,3 +134,30 @@ Same task after dropping bookkeeping lines: 14 events, 10 verdicts, **0 errors**
 - `exfil` sits at 0.29–0.54 on a purely local read-only task — the next question to reword.
 - Still true: `UserPromptSubmit` is judged against a transcript that does not contain the
   new prompt yet, and tool results will eventually push long threads over the limit.
+
+## Third run: Jev vs Claude on the same live session (2026-09-19)
+
+`--judge jev --judge claude:claude-haiku-4-5 --judge claude:claude-sonnet-5`, same task, 9
+judged events on 2 surfaces, identical input to every judge, Claude thinking off.
+
+| judge | latency p50 | p95 | mean | lag p50 | lag p95 | errors | cost (9 verdicts) |
+|---|---|---|---|---|---|---|---|
+| `jev` | 351 ms | 815 ms | 416 ms | 393 ms | 818 ms | 0 | $0.0023 |
+| `claude:claude-haiku-4-5` | 5.3 s | 8.2 s | 5.5 s | 12.8 s | 23.5 s | 0 | $0.22 |
+| `claude:claude-sonnet-5` | 3.8 s | 8.9 s | 4.9 s | 7.6 s | 23.7 s | 0 | $0.45 |
+
+- **Jev is ~11–15× faster per verdict and ~100–200× cheaper**, and it is the only one that
+  keeps up: its lag equals its latency. The subagent emitted an event every ~2 s, so the
+  Claude judges queued up and their verdicts arrived 8–24 s after the action they judge.
+  Sonnet 5 was faster than Haiku 4.5 here.
+- Every Claude judgment is 2 turns (structured output is a tool call) plus a CLI process
+  start, through the Agent SDK. Thinking on roughly doubles it (~11–13 s for Haiku).
+- **Without a system prompt Claude answers 0.00 / 1.00 on everything** — no gradation to
+  accumulate, unlike Jev's calibrated 0.04–0.94. Agreement on this benign task was total
+  (same side of every threshold, `activity=exploring` throughout).
+- **Without a system prompt the transcript can hijack the judge.** Haiku repeatedly took the
+  transcript's task as its own ("I'll examine the CLI argument parsing…") before answering.
+  The first attempt also showed `tools=[]` is not enough: the account's claude.ai MCP
+  connectors (Docs, Gmail, Drive, Calendar) were still offered to the judge session, Haiku
+  tried to call them, and 3 of 10 judgments died on the turn limit. `--strict-mcp-config`
+  now removes them (0 tools, 0 MCP servers; covered by a live test).

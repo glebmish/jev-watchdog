@@ -8,9 +8,10 @@ from jev_watchdog.pack import Question
 
 
 class FakeJudge:
-    name = "fake"
-
-    def __init__(self, latency_s: float = 0.0, fail_with: str | None = None) -> None:
+    def __init__(
+        self, latency_s: float = 0.0, fail_with: str | None = None, name: str = "fake"
+    ) -> None:
+        self.name = name
         self.latency_s = latency_s
         self.fail_with = fail_with
         self.calls: list[JudgeRequest] = []

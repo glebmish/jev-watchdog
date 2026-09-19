@@ -346,3 +346,28 @@ per line to `runs/<timestamp>.jsonl` (gitignored), for later calibration.
 
 State construction (window + pinned goal + redaction), threshold → action
 rules, actuators, Codex, LLM escalation, SQLite, transcript tailing.
+
+## Addendum: multiple judges and the Claude backend (2026-09-19)
+
+Goal: evaluate alternatives to Jev on identical input and see the latency difference.
+
+- `--judge NAME[:MODEL]` is repeatable. `SurfaceRegistry` takes a list of judges with unique
+  names and keeps one queue + worker per (surface, judge): serial per judge within a surface,
+  concurrent across judges and surfaces, so a slow judge never delays a fast one. All judges
+  of an event share one transcript snapshot.
+- Statistics are per judge. `SurfaceStats.judges[name]` holds the per-question accumulators;
+  `GlobalStats.judges[name]` holds judgments, errors, latency, **lag** (hook received →
+  verdict ready), tokens and cost. `Verdict` gained `cost_usd`; Jev computes it from tokens,
+  Claude reports it. Errors not tied to a judge (`payload`, `transcript`) stay at surface /
+  global level.
+- `judge/claude_agent.py` (`ClaudeAgentJudge`, the only importer of `claude-agent-sdk`): one
+  fresh `query()` per judgment through the local Claude Code login; `system_prompt=""`, the
+  prompt is `request_payload(req)` as JSON — exactly Jev's request body — and
+  `output_format` is a JSON schema derived from the pack (noul → number 0–1, score → number
+  0–(levels−1), choice → enum). `tools=[]`, `setting_sources=[]`, `--strict-mcp-config` and
+  `--no-session-persistence`: no tools, no MCP connectors, no hooks/plugins (no recursion
+  into the watchdog), no session files. Thinking disabled unless `--claude-thinking`.
+  Out-of-range numbers are clamped; unknown choices are dropped. Default model
+  `claude-opus-5`; 120 s timeout; `max_turns=4`.
+- Known consequence of identical input (no system prompt), accepted: answers collapse to
+  0/1 and the transcript can steer the judge's first turn. With no tools it cannot act.

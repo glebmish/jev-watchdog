@@ -112,12 +112,24 @@ async def test_aclose_closes_the_client():
     assert client.closed
 
 
-def test_registry():
-    assert set(JUDGES) == {"jev", "fake"}
+def test_registry_builds_judges_from_specs():
+    assert set(JUDGES) == {"jev", "claude", "fake"}
     assert make_judge("fake", JudgeConfig()).name == "fake"
     assert make_judge("jev", JudgeConfig(api_key="apikey_test")).name == "jev"
+    assert (
+        make_judge("jev:jev-preview", JudgeConfig(api_key="apikey_test")).name == "jev:jev-preview"
+    )
+    assert make_judge("claude", JudgeConfig()).name == "claude:claude-opus-5"
+    assert make_judge("claude:claude-haiku-4-5", JudgeConfig()).name == "claude:claude-haiku-4-5"
     with pytest.raises(ValueError, match="unknown judge"):
         make_judge("nope", JudgeConfig())
+    with pytest.raises(ValueError, match="unknown judge"):
+        make_judge("nope:model", JudgeConfig())
+
+
+async def test_verdict_carries_the_cost_of_the_call():
+    verdict = await JevJudge(client=FakeClient()).judge(request())
+    assert verdict.cost_usd == pytest.approx(400 / 1_000_000 * 0.042)
 
 
 async def test_over_limit_message_is_concise():

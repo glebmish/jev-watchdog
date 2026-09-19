@@ -21,8 +21,9 @@ class Verdict:
     answers: dict[str, Answer]
     latency_ms: float
     input_tokens: int | None
-    judge: str
+    judge: str  # what actually answered, e.g. the versioned model id
     raw: dict | None = None
+    cost_usd: float | None = None
 
 
 @dataclass(frozen=True)
@@ -46,3 +47,16 @@ class Judge(Protocol):
     async def judge(self, req: JudgeRequest) -> Verdict: ...
 
     async def aclose(self) -> None: ...
+
+
+def request_payload(req: JudgeRequest) -> dict:
+    """A request as plain JSON, in the shape of Jev's HTTP body: state plus typed questions.
+
+    Judges that take free-form input send exactly this, so every backend sees the same thing.
+    """
+    questions = {}
+    for question in req.questions:
+        questions[question.id] = {"type": question.kind, "instructions": question.instructions}
+        if question.criteria is not None:
+            questions[question.id]["criteria"] = question.criteria
+    return {"state": req.transcript_lines, "questions": questions}

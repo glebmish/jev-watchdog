@@ -1,6 +1,7 @@
 """Surfaces: one per agent thread, each with its own queue, worker and statistics."""
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +35,7 @@ ALL_EVENTS = LIFECYCLE_EVENTS | JUDGING_EVENTS
 class Job:
     event: dict
     transcript_lines: list[str]
+    received_at: float  # time.monotonic() when the hook arrived
 
 
 @dataclass
@@ -43,9 +45,10 @@ class Surface:
     cwd: str | None
     transcript_path: Path
     stats: SurfaceStats = field(default_factory=SurfaceStats)
-    # None is the end-of-session sentinel: print the summary and stop the worker.
-    queue: asyncio.Queue[Job | None] = field(default_factory=asyncio.Queue)
-    worker: asyncio.Task | None = None
+    # One queue and worker per judge, keyed by judge name, so a slow judge never delays a
+    # fast one. None is the end-of-session sentinel: print the summary and stop the worker.
+    queues: dict[str, asyncio.Queue[Job | None]] = field(default_factory=dict)
+    workers: dict[str, asyncio.Task] = field(default_factory=dict)
 
     @property
     def label(self) -> str:
@@ -55,19 +58,25 @@ class Surface:
 class SurfaceRegistry:
     def __init__(
         self,
-        judge: Judge,
+        judges: list[Judge],
         questions: list[Question],
         printer: Printer,
         stats: GlobalStats | None = None,
     ) -> None:
-        self.judge = judge
+        names = [judge.name for judge in judges]
+        if len(set(names)) != len(names):
+            raise ValueError(f"duplicate judge names: {names}")
+        self.judges = judges
         self.questions = questions
         self.printer = printer
         self.stats = stats or GlobalStats()
+        for judge in judges:
+            self.stats.judge(judge.name)  # table rows in the order given
         self.surfaces: dict[SurfaceKey, Surface] = {}
 
     def handle(self, payload: dict) -> None:
         """Route one hook payload. Never raises; must run inside the event loop."""
+        received_at = time.monotonic()
         event = payload.get("hook_event_name")
         if not event or not payload.get("session_id") or not payload.get("transcript_path"):
             self.bad_payload("missing hook_event_name, session_id or transcript_path")
@@ -88,10 +97,12 @@ class SurfaceRegistry:
             except FileNotFoundError:
                 lines = []  # session start: the hook fires before the transcript exists
             except OSError as exc:
-                self._error(surface, "transcript", str(exc))
+                surface.stats.record_error("transcript")
+                self.stats.record_error("transcript")
+                self.printer.error(surface.label, "transcript", str(exc))
                 return
             if lines:
-                self._enqueue(surface, Job(payload, lines))
+                self._enqueue(surface, Job(payload, lines, received_at))
             else:
                 self.printer.note(
                     surface.label, "no conversation in transcript yet, registered only"
@@ -105,10 +116,16 @@ class SurfaceRegistry:
         return {surface.label: surface.stats for surface in self.surfaces.values()}
 
     async def drain(self) -> None:
-        await asyncio.gather(*(surface.queue.join() for surface in self.surfaces.values()))
+        queues = [q for surface in self.surfaces.values() for q in surface.queues.values()]
+        await asyncio.gather(*(queue.join() for queue in queues))
 
     async def shutdown(self) -> None:
-        workers = [s.worker for s in self.surfaces.values() if s.worker and not s.worker.done()]
+        workers = [
+            worker
+            for surface in self.surfaces.values()
+            for worker in surface.workers.values()
+            if not worker.done()
+        ]
         for worker in workers:
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
@@ -130,35 +147,41 @@ class SurfaceRegistry:
         return surface
 
     def _enqueue(self, surface: Surface, job: Job | None) -> None:
-        if surface.worker is None or surface.worker.done():
-            surface.worker = asyncio.create_task(self._work(surface), name=f"judge:{surface.label}")
-        surface.queue.put_nowait(job)
+        for judge in self.judges:
+            queue = surface.queues.setdefault(judge.name, asyncio.Queue())
+            worker = surface.workers.get(judge.name)
+            if worker is None or worker.done():
+                surface.workers[judge.name] = asyncio.create_task(
+                    self._work(surface, judge, queue), name=f"{judge.name}:{surface.label}"
+                )
+            queue.put_nowait(job)
 
-    async def _work(self, surface: Surface) -> None:
+    async def _work(self, surface: Surface, judge: Judge, queue: asyncio.Queue) -> None:
         while True:
-            job = await surface.queue.get()
+            job = await queue.get()
             try:
                 if job is None:
-                    self.printer.surface_summary(surface.label, surface.stats)
+                    self.printer.surface_summary(surface.label, surface.stats, judge.name)
                     return
-                await self._judge(surface, job)
+                await self._judge(surface, judge, job)
             finally:
-                surface.queue.task_done()
+                queue.task_done()
 
-    async def _judge(self, surface: Surface, job: Job) -> None:
+    async def _judge(self, surface: Surface, judge: Judge, job: Job) -> None:
         request = JudgeRequest(surface.key, job.event, job.transcript_lines, self.questions)
         try:
-            verdict = await self.judge.judge(request)
+            verdict = await judge.judge(request)
         except JudgeError as exc:
-            self._error(surface, exc.kind, exc.message)
-        except Exception as exc:  # noqa: BLE001 - a judge bug must not kill the surface's worker
-            self._error(surface, "other", repr(exc))
+            self._judge_error(surface, judge, exc.kind, exc.message)
+        except Exception as exc:  # noqa: BLE001 - a judge bug must not kill the worker
+            self._judge_error(surface, judge, "other", repr(exc))
         else:
-            flagged = surface.stats.record_verdict(self.questions, verdict)
-            self.stats.record_verdict(verdict)
-            self.printer.verdict(surface.label, verdict, flagged)
+            lag_ms = (time.monotonic() - job.received_at) * 1000
+            flagged = surface.stats.judge(judge.name).record_verdict(self.questions, verdict)
+            self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
+            self.printer.verdict(surface.label, judge.name, verdict, flagged)
 
-    def _error(self, surface: Surface, kind: str, message: str) -> None:
-        surface.stats.record_error(kind)
-        self.stats.record_error(kind)
-        self.printer.error(surface.label, kind, message)
+    def _judge_error(self, surface: Surface, judge: Judge, kind: str, message: str) -> None:
+        surface.stats.judge(judge.name).record_error(kind)
+        self.stats.judge(judge.name).record_error(kind)
+        self.printer.error(surface.label, kind, message, judge=judge.name)

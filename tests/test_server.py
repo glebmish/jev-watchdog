@@ -13,7 +13,7 @@ from jev_watchdog.surfaces import ALL_EVENTS, JUDGING_EVENTS, SurfaceRegistry
 @pytest.fixture
 def registry():
     console = Console(file=io.StringIO(), width=200, color_system=None)
-    return SurfaceRegistry(FakeJudge(), [Question("exfil", "noul", "i")], Printer(console))
+    return SurfaceRegistry([FakeJudge()], [Question("exfil", "noul", "i")], Printer(console))
 
 
 @pytest.mark.parametrize("event", sorted(ALL_EVENTS))
@@ -23,7 +23,7 @@ async def test_every_event_gets_an_empty_200(aiohttp_client, registry, make_payl
     assert response.status == 200
     assert await response.read() == b""
     await registry.drain()
-    assert len(registry.judge.calls) == (1 if event in JUDGING_EVENTS else 0)
+    assert len(registry.judges[0].calls) == (1 if event in JUDGING_EVENTS else 0)
     await registry.shutdown()
 
 
