@@ -26,6 +26,9 @@ TIMEOUT_S = 120.0
 # Exactly one model step. The structured answer is that step's tool call (the SDK reports it
 # as a second turn), so the judge can answer but can never take a follow-up action.
 MAX_TURNS = 1
+# Every judgment starts a `claude` CLI process; replaying a corpus would otherwise start one
+# per case at once.
+MAX_CONCURRENCY = 4
 
 
 class ClaudeAgentJudge:
@@ -34,6 +37,7 @@ class ClaudeAgentJudge:
         model: str = DEFAULT_MODEL,
         thinking: bool = False,
         timeout_s: float = TIMEOUT_S,
+        max_concurrency: int = MAX_CONCURRENCY,
         query_fn: Callable[..., AsyncIterator[Any]] = query,
     ) -> None:
         self.name = f"claude:{model}"
@@ -41,6 +45,7 @@ class ClaudeAgentJudge:
         self.thinking = thinking
         self.timeout_s = timeout_s
         self._query = query_fn
+        self._slots = asyncio.Semaphore(max_concurrency)
         # An empty working directory: nothing for the CLI to discover or load.
         self._cwd = tempfile.mkdtemp(prefix="jev-watchdog-judge-")
 
@@ -61,17 +66,18 @@ class ClaudeAgentJudge:
 
     async def judge(self, req: JudgeRequest) -> Verdict:
         options = self.options(req)
-        started = time.perf_counter()
         try:
-            async with asyncio.timeout(self.timeout_s):
-                result = await self._result(build_prompt(req), options)
+            async with self._slots:
+                started = time.perf_counter()
+                async with asyncio.timeout(self.timeout_s):
+                    result = await self._result(build_prompt(req), options)
+                latency_ms = (time.perf_counter() - started) * 1000
         except TimeoutError as exc:
             raise JudgeError("timeout", f"no verdict within {self.timeout_s:.0f}s") from exc
         except JudgeError:
             raise
         except Exception as exc:
             raise JudgeError(_error_kind(None, str(exc)), str(exc)) from exc
-        latency_ms = (time.perf_counter() - started) * 1000
 
         if result.is_error or result.subtype != "success":
             detail = result.result or "; ".join(result.errors or []) or result.subtype

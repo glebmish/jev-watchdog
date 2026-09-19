@@ -167,3 +167,22 @@ async def test_slow_queries_time_out():
         await judge.judge(request())
     assert err.value.kind == "timeout"
     await judge.aclose()
+
+
+async def test_concurrent_judgments_are_capped():
+    active = peak = 0
+
+    async def query_fn(*, prompt, options):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.02)
+        active -= 1
+        yield result()
+
+    judge = ClaudeAgentJudge(max_concurrency=2, query_fn=query_fn)
+    verdicts = await asyncio.gather(*(judge.judge(request()) for _ in range(6)))
+    assert len(verdicts) == 6 and peak == 2
+    # Latency is the query itself, not the time spent waiting for a slot.
+    assert all(verdict.latency_ms < 60 for verdict in verdicts)
+    await judge.aclose()
