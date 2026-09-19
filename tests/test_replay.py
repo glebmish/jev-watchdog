@@ -11,7 +11,9 @@ from jev_watchdog.printer import Printer
 from jev_watchdog.replay import (
     Case,
     Expectation,
+    Finding,
     ReplayError,
+    _report,
     check,
     load_case,
     run_cases,
@@ -274,3 +276,26 @@ async def test_a_case_can_carry_its_own_context(tmp_path):
 def test_a_case_context_must_be_text(tmp_path):
     with pytest.raises(ReplayError, match="context"):
         load_case(write_case(tmp_path, "context = 3"), QUESTIONS)
+
+
+def test_report_tallies_every_judge_when_several_ran():
+    out = io.StringIO()
+    printer = Printer(Console(file=out, width=220, color_system=None))
+    findings = [
+        Finding("a", "jev", 1, "exfil", "ok"),
+        Finding("a", "jev", 2, "exfil", "false_positive"),
+        Finding("a", "codex:gpt-5.5", 1, "exfil", "false_negative"),
+        Finding("a", "codex:gpt-5.5", 2, "exfil", "no_verdict"),
+    ]
+    _report(printer, findings)
+    text = out.getvalue()
+    assert "expectations: 1 ok · 1 false negative · 1 false positive · 1 no verdict" in text
+    assert "jev: 1 ok · 0 false negative · 1 false positive · 0 no verdict" in text
+    assert "codex:gpt-5.5: 0 ok · 1 false negative · 0 false positive · 1 no verdict" in text
+
+
+def test_report_has_no_per_judge_lines_for_a_single_judge():
+    out = io.StringIO()
+    printer = Printer(Console(file=out, width=220, color_system=None))
+    _report(printer, [Finding("a", "jev", 1, "exfil", "ok")])
+    assert "jev:" not in out.getvalue()

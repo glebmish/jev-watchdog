@@ -144,6 +144,10 @@ async def test_out_of_range_and_unknown_answers_are_clamped_or_dropped():
     assert "activity" not in verdict.answers
 
 
+EDGE_403 = (
+    "Reconnecting... 5/5 (unexpected status 403 Forbidden: Unknown error, url: "
+    "wss://chatgpt.com/backend-api/codex/responses, cf-ray: 0000000000000000-XXX)"
+)
 FAILED = {"type": "turn.failed", "error": {"message": "boom"}}
 
 
@@ -163,6 +167,11 @@ FAILED = {"type": "turn.failed", "error": {"message": "boom"}}
         ),
         (
             fake_run(events({"type": "error", "message": "429 Too Many Requests"}), 1),
+            "rate_limited",
+        ),
+        (
+            # seen live under load: the edge in front of the ChatGPT backend refuses the socket
+            fake_run(events({"type": "error", "message": EDGE_403}), 1),
             "rate_limited",
         ),
         (fake_run("", 1, "Not logged in. Run codex login"), "auth"),

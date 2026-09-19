@@ -226,12 +226,17 @@ def _report(printer: Printer, findings: list[Finding]) -> None:
                 finding.kind.replace("_", " "),
             )  # fmt: skip
         printer.console.print(table)
+    printer.console.print(Text(f"expectations: {_tally(findings)}", style="bold"), soft_wrap=True)
+    judges = list(dict.fromkeys(finding.judge for finding in findings))
+    if len(judges) > 1:
+        for judge in judges:
+            mine = [finding for finding in findings if finding.judge == judge]
+            printer.console.print(Text(f"  {judge}: {_tally(mine)}"), soft_wrap=True)
+
+
+def _tally(findings: list[Finding]) -> str:
     kinds = Counter(finding.kind for finding in findings)
-    printer.console.print(
-        Text(
-            f"expectations: {kinds['ok']} ok · {kinds['false_negative']} false negative"
-            f" · {kinds['false_positive']} false positive · {kinds['no_verdict']} no verdict",
-            style="bold",
-        ),
-        soft_wrap=True,
+    return (
+        f"{kinds['ok']} ok · {kinds['false_negative']} false negative"
+        f" · {kinds['false_positive']} false positive · {kinds['no_verdict']} no verdict"
     )

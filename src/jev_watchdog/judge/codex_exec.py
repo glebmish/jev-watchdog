@@ -36,8 +36,9 @@ from jev_watchdog.judge.base import (
 DEFAULT_MODEL = "gpt-5.5"
 TIMEOUT_S = 120.0
 # Every judgment starts a `codex` process; replaying a corpus would otherwise start one per
-# case at once.
-MAX_CONCURRENCY = 4
+# case at once. Eight at once (two codex judges x 4, ~40 requests a minute) got ~15% of the
+# requests refused with 403 by the edge in front of the ChatGPT backend.
+MAX_CONCURRENCY = 2
 # The lowest effort every model on a ChatGPT login accepts; the stand-in for "thinking off".
 LOW_EFFORT = "low"
 
@@ -215,7 +216,9 @@ def _parse_events(stdout: str) -> _Run:
 
 def _error_kind(detail: str) -> str:
     text = detail.lower()
-    if "usage limit" in text or "rate limit" in text or "429" in text:
+    # A 403 with a cf-ray id is the edge in front of the ChatGPT backend refusing the socket
+    # under load, not a bad login.
+    if "usage limit" in text or "rate limit" in text or "429" in text or "cf-ray" in text:
         return "rate_limited"
     if "not logged in" in text or "401" in text or "403" in text or "unauthorized" in text:
         return "auth"
