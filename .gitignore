@@ -1,0 +1,10 @@
+prototype-throwaway-key
+*.key
+.env
+runs/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+dist/
