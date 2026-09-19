@@ -62,11 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
     quarantine = commands.add_parser("quarantine", help="quarantine a thread by hand")
     quarantine.add_argument("--reason", default="manual")
     release = commands.add_parser("release", help="release a quarantined thread")
-    for command in (quarantine, release):
+    context = commands.add_parser(
+        "context",
+        help="tell the judges what you know about a session and the agent does not",
+    )
+    for command in (quarantine, release, context):
         command.add_argument(
             "target", metavar="TARGET", help="as shown on the console: SESSION[/AGENT]"
         )
-    for command in (status, quarantine, release):
+    context.add_argument("text", nargs="?", metavar="TEXT", help="applies to the whole session")
+    context.add_argument("--clear", action="store_true", help="forget the session's context")
+    for command in (status, quarantine, release, context):
         command.add_argument("--port", type=int, default=DEFAULT_PORT)
     return parser
 
@@ -94,6 +100,13 @@ def _add_judging_options(command: argparse.ArgumentParser) -> None:
         type=Path,
         help="question pack; repeat to merge several, e.g. --pack pack.toml --pack "
         "packs/canary.toml adds an easy-to-trip rule for end-to-end tests. Default: pack.toml",
+    )
+    command.add_argument(
+        "--context",
+        default=None,
+        metavar="TEXT",
+        help="what you know about the sessions and the agent does not; judged next to the "
+        "transcript. `jev-watchdog context` sets it for one running session instead",
     )
     command.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     command.add_argument(
@@ -125,8 +138,11 @@ def resolve_api_key(env: Mapping[str, str], key_file: Path) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    if args.command in ("status", "quarantine", "release"):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.command == "context" and (args.text is None) != args.clear:
+        parser.error("context takes TEXT or --clear")
+    if args.command in ("status", "quarantine", "release", "context"):
         return _control(args)
     try:
         questions = load_packs(args.pack)
@@ -147,7 +163,12 @@ def main(argv: list[str] | None = None) -> int:
         enforce = args.command == "run" and args.enforce
         wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
         registry = SurfaceRegistry(
-            judges, questions, printer, enforce=enforce, transcript_wait_s=wait_s
+            judges,
+            questions,
+            printer,
+            enforce=enforce,
+            transcript_wait_s=wait_s,
+            context=(args.context or "").strip() or None,
         )
         if args.command == "replay":
             return asyncio.run(_replay(args.cases, registry, printer, questions))
@@ -177,6 +198,8 @@ def _control(args: argparse.Namespace) -> int:
             request = {"target": args.target}
             if args.command == "quarantine":
                 request["reason"] = args.reason
+            elif args.command == "context":
+                request["text"] = args.text or ""
             status, body = control.call(args.port, "POST", f"/{args.command}", request)
     except control.Unreachable:
         print(f"no watchdog listening on port {args.port}", file=sys.stderr)
@@ -191,6 +214,8 @@ def _control(args: argparse.Namespace) -> int:
             print("nothing is quarantined")
     elif args.command == "quarantine":
         print(f"quarantined {body['target']}: {body['reason']}")
+    elif args.command == "context":
+        print(f"context {'set' if body['context'] else 'cleared'} for {body['target']}")
     else:
         print(f"released {body['target']}")
     return 0

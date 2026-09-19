@@ -4,7 +4,7 @@ import time
 
 import typesafe_sdk as ts
 
-from jev_watchdog.judge.base import Answer, JudgeError, JudgeRequest, Verdict
+from jev_watchdog.judge.base import Answer, JudgeError, JudgeRequest, Verdict, request_state
 from jev_watchdog.pack import Question
 
 DEFAULT_MODEL = "jev-latest"
@@ -28,9 +28,7 @@ class JevJudge:
         questions = {q.id: _to_sdk(q) for q in req.questions}
         started = time.perf_counter()
         try:
-            response = await self._client.system_one(
-                state=req.transcript_lines, questions=questions
-            )
+            response = await self._client.system_one(state=request_state(req), questions=questions)
         except ts.TypeSafeError as exc:
             kind = _error_kind(exc)
             message = str(exc)

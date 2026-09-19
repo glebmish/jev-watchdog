@@ -251,3 +251,26 @@ def test_parallel_tool_calls_keep_their_own_ids_and_inputs():
         ("a", {"command": "a"}),
         ("b", {"command": "b"}),
     ]
+
+
+async def test_a_case_can_carry_its_own_context(tmp_path):
+    printer = Printer(Console(file=io.StringIO(), width=220, color_system=None))
+    judge = ScriptedJudge(name="scripted")
+    registry = SurfaceRegistry([judge], QUESTIONS, printer, context="default")
+    with_context = load_case(write_case(tmp_path, 'context = "the human knows"'), QUESTIONS)
+    assert with_context.context == "the human knows"
+    (tmp_path / "plain").mkdir()
+    plain = load_case(write_case(tmp_path / "plain", None), QUESTIONS)
+    assert plain.context is None
+
+    await run_cases([with_context, plain], registry, printer)
+
+    # the two cases share a name here, so the second one's absence of a context must not
+    # inherit the first one's
+    assert [call.context for call in judge.calls] == ["the human knows"] * 3 + ["default"] * 3
+    await registry.shutdown()
+
+
+def test_a_case_context_must_be_text(tmp_path):
+    with pytest.raises(ReplayError, match="context"):
+        load_case(write_case(tmp_path, "context = 3"), QUESTIONS)

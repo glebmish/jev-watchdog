@@ -62,6 +62,7 @@ class Job:
     event: dict
     transcript_lines: list[str]
     received_at: float  # time.monotonic() when the hook arrived
+    context: str | None = None  # the session's context when the hook arrived
 
 
 @dataclass(frozen=True)
@@ -72,6 +73,7 @@ class _Pending:
     payload: dict | None  # None is the end-of-session sentinel
     received_at: float
     lines: list[str] | None  # the snapshot taken at receipt, when it was already complete
+    context: str | None = None
 
 
 @dataclass
@@ -105,6 +107,7 @@ class SurfaceRegistry:
         stats: GlobalStats | None = None,
         enforce: bool = False,
         transcript_wait_s: float = TRANSCRIPT_WAIT_S,
+        context: str | None = None,
     ) -> None:
         names = [judge.name for judge in judges]
         if len(set(names)) != len(names):
@@ -122,6 +125,10 @@ class SurfaceRegistry:
         self.transcript_wait_s = transcript_wait_s
         self.decider = Decider(questions)
         self.quarantines = Quarantines()
+        # What the human told the watchdog about a session, by session id: every thread of
+        # the session is judged with it. default_context stands in where nothing was said.
+        self.default_context = context
+        self.contexts: dict[str, str] = {}
         # Optional observer: on_verdict(surface, judge_name, job, verdict, flagged_ids, tripped)
         self.on_verdict: Callable[[Surface, str, Job, Verdict, set[str], bool], None] | None = None
 
@@ -157,8 +164,24 @@ class SurfaceRegistry:
                 behind = self._awaited(payload) and not has_tool_result(
                     lines, payload["tool_use_id"]
                 )
-                self._admit(surface, _Pending(payload, received_at, None if behind else lines))
+                context = self.contexts.get(surface.key.session_id, self.default_context)
+                self._admit(
+                    surface, _Pending(payload, received_at, None if behind else lines, context)
+                )
         return None
+
+    def set_context(self, target: str, text: str) -> str:
+        """Set (or, with blank text, clear) the context of the target's whole session."""
+        surface = self._resolve(target)
+        session = self.surfaces.get(SurfaceKey(surface.key.session_id, MAIN), surface)
+        text = text.strip()
+        if text:
+            self.contexts[session.key.session_id] = text
+            self.printer.note(session.label, f"context set: {text}")
+        else:
+            self.contexts.pop(session.key.session_id, None)
+            self.printer.note(session.label, "context cleared")
+        return session.label
 
     def quarantine(self, target: str, reason: str) -> Quarantine:
         """Quarantine by hand. Holds whether or not rules are enforced."""
@@ -263,7 +286,8 @@ class SurfaceRegistry:
         if pending.payload is None:
             self._enqueue(surface, None)
         elif lines:
-            self._enqueue(surface, Job(pending.payload, lines, pending.received_at))
+            job = Job(pending.payload, lines, pending.received_at, pending.context)
+            self._enqueue(surface, job)
         elif lines is not None:
             self.printer.note(surface.label, "no conversation in transcript yet, registered only")
 
@@ -349,7 +373,9 @@ class SurfaceRegistry:
                 queue.task_done()
 
     async def _judge(self, surface: Surface, judge: Judge, job: Job) -> None:
-        request = JudgeRequest(surface.key, job.event, job.transcript_lines, self.questions)
+        asked = (question.asked(job.context is not None) for question in self.questions)
+        questions = [question for question in asked if question is not None]
+        request = JudgeRequest(surface.key, job.event, job.transcript_lines, questions, job.context)
         try:
             verdict = await judge.judge(request)
         except JudgeError as exc:
@@ -361,7 +387,7 @@ class SurfaceRegistry:
             flagged = surface.stats.judge(judge.name).record_verdict(self.questions, verdict)
             self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
             step = job.event.get("replay_step")
-            self.printer.verdict(surface.label, judge.name, verdict, flagged, step)
+            self.printer.verdict(surface.label, judge.name, verdict, flagged, step, job.context)
             trip = self.decider.fold(surface.key, judge.name, job.event, verdict)
             if trip is not None:
                 self._tripped(surface, judge, trip)

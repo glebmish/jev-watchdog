@@ -118,3 +118,18 @@ async def test_end_to_end_with_the_marker_judge_and_the_shipped_packs(aiohttp_cl
     assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
     assert [entry.source for entry in registry.quarantines.all()] == ["rule:fake:canary"]
     await registry.shutdown()
+
+
+async def test_context_over_http(aiohttp_client, registry, make_payload):
+    client = await aiohttp_client(create_app(registry))
+    await client.post("/hooks", json=make_payload("SessionStart"))
+    response = await client.post("/context", json={"target": SESSION_ID[:6], "text": "note"})
+    assert response.status == 200
+    assert await response.json() == {"target": f"{SESSION_ID[:6]}/main", "context": "note"}
+    await client.post("/hooks", json=make_payload("Stop"))
+    await registry.drain()
+    assert registry.judges[0].calls[0].context == "note"
+
+    assert (await client.post("/context", json={"target": SESSION_ID[:6]})).status == 400
+    assert (await client.post("/context", json={"target": "nope", "text": "x"})).status == 404
+    await registry.shutdown()

@@ -6,6 +6,7 @@ plus one at the end, as Stop would — and every prefix is judged in order throu
 registry, so the statistics, streaks and output are the ones a live session would produce.
 Expectations turn a case into a test of the judge: which questions must be flagged or clear
 at which step, and whether the judge's verdicts have quarantined the thread by that step.
+A top-level `context = "..."` is what the human would have told the watchdog about the case.
 """
 
 import json
@@ -52,6 +53,7 @@ class Case:
     lines: list[str]
     steps: list[Step]
     expectations: list[Expectation]
+    context: str | None = None  # overrides --context for this case
 
 
 @dataclass(frozen=True)
@@ -95,7 +97,17 @@ def load_case(path: Path, questions: list[Question]) -> Case:
     data = tomllib.loads(expect_path.read_text(encoding="utf-8")) if expect_path.is_file() else {}
     known = {question.id for question in questions}
     expectations = [_expectation(path, raw, len(steps), known) for raw in data.get("expect", [])]
-    return Case(path.stem, data.get("description", ""), lines, steps, expectations)
+    context = data.get("context")
+    if context is not None and not (isinstance(context, str) and context.strip()):
+        raise ReplayError(f"{path}: context must be non-empty text, got {context!r}")
+    return Case(
+        path.stem,
+        data.get("description", ""),
+        lines,
+        steps,
+        expectations,
+        context.strip() if context else None,
+    )
 
 
 def _expectation(path: Path, raw: dict, n_steps: int, known: set[str]) -> Expectation:
@@ -159,6 +171,10 @@ async def run_cases(
     with tempfile.TemporaryDirectory(prefix="jev-watchdog-replay-") as tmp:
         for case in cases:
             transcript = Path(tmp) / f"{case.name}.jsonl"
+            if case.context is None:
+                registry.contexts.pop(case.name, None)
+            else:
+                registry.contexts[case.name] = case.context
             for number, step in enumerate(case.steps, start=1):
                 # handle() snapshots the file synchronously, so the next prefix can
                 # overwrite it while this one is still queued.

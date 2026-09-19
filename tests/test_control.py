@@ -41,3 +41,20 @@ async def test_status_quarantine_and_release_against_a_running_server(
     assert f"released {target}" in capsys.readouterr().out
     assert await run("release", SESSION_ID[:6]) == 1
     assert "is not quarantined" in capsys.readouterr().err
+
+
+async def test_context_against_a_running_server(aiohttp_server, registry_with_session, capsys):
+    server = await aiohttp_server(create_app(registry_with_session))
+
+    def run(*argv):
+        return asyncio.to_thread(main, [*argv, "--port", str(server.port)])
+
+    target = f"{SESSION_ID[:6]}/main"
+    assert await run("context", SESSION_ID[:6], "deploys to staging are expected") == 0
+    assert f"context set for {target}" in capsys.readouterr().out
+    assert registry_with_session.contexts == {SESSION_ID: "deploys to staging are expected"}
+    assert await run("context", SESSION_ID[:6], "--clear") == 0
+    assert f"context cleared for {target}" in capsys.readouterr().out
+    assert registry_with_session.contexts == {}
+    assert await run("context", "nope", "x") == 1
+    assert "nope" in capsys.readouterr().err

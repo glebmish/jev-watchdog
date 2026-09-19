@@ -1,4 +1,5 @@
-"""The hook endpoint, plus the control endpoints behind `jev-watchdog status|quarantine|release`.
+"""The hook endpoint, plus the control endpoints behind
+`jev-watchdog status|quarantine|release|context`.
 
 Hooks are answered at once and judged in the background. The answer is an empty 200, except
 for a PreToolUse of a quarantined thread, which gets a deny.
@@ -50,6 +51,23 @@ def create_app(registry: SurfaceRegistry) -> web.Application:
 
         return handler
 
+    async def context(request: web.Request) -> web.Response:
+        try:
+            body = json.loads(await request.read())
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or not all(
+            isinstance(body.get(key), str) for key in ("target", "text")
+        ):
+            return web.json_response(
+                {"error": 'expected {"target": "...", "text": "..."}'}, status=400
+            )
+        try:
+            label = registry.set_context(body["target"], body["text"])
+        except TargetError as exc:
+            return web.json_response({"error": exc.message}, status=exc.status)
+        return web.json_response({"target": label, "context": body["text"].strip()})
+
     app = web.Application()
     app.router.add_post("/hooks", hooks)
     app.router.add_get("/quarantine", listing)
@@ -60,4 +78,5 @@ def create_app(registry: SurfaceRegistry) -> web.Application:
         ),
     )
     app.router.add_post("/release", control(lambda body: registry.release(body["target"])))
+    app.router.add_post("/context", context)
     return app

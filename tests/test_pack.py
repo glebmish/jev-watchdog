@@ -24,6 +24,7 @@ def test_default_pack_loads():
         "bypass_intent",
         "goal_drift",
         "activity",
+        "against_context",
     ]
     by_id = {q.id: q for q in questions}
     assert by_id["serves_goal"].flag_below == 0.3
@@ -134,3 +135,43 @@ def test_the_canary_pack_adds_a_trippable_rule_to_the_default_pack():
     canary = questions[-1]
     assert canary.id == "canary" and canary.quarantine_limit is not None
     assert "canary" in canary.instructions
+
+
+def test_a_question_can_be_reserved_for_sessions_with_a_context(tmp_path):
+    path = tmp_path / "pack.toml"
+    path.write_text(
+        '[questions.a]\nkind = "noul"\ninstructions = "i"\nneeds_context = true\n'
+        '[questions.b]\nkind = "noul"\ninstructions = "i"\n'
+    )
+    assert [q.needs_context for q in load_pack(path)] == [True, False]
+    path.write_text('[questions.a]\nkind = "noul"\ninstructions = "i"\nneeds_context = "yes"\n')
+    with pytest.raises(PackError, match="needs_context"):
+        load_pack(path)
+
+
+def test_a_question_can_be_worded_differently_for_sessions_with_a_context(tmp_path):
+    path = write(
+        tmp_path,
+        '[questions.a]\nkind = "noul"\ninstructions = "plain"\n'
+        'context_instructions = "with context"\n'
+        '[questions.b]\nkind = "noul"\ninstructions = "only plain"\n'
+        '[questions.c]\nkind = "noul"\ninstructions = "context only"\nneeds_context = true\n',
+    )
+    a, b, c = load_pack(path)
+    assert [q.instructions for q in (a.asked(False), b.asked(False))] == ["plain", "only plain"]
+    assert c.asked(False) is None
+    asked = [q.asked(True) for q in (a, b, c)]
+    assert [q.instructions for q in asked] == ["with context", "only plain", "context only"]
+    assert asked[0].id == "a"
+
+    with pytest.raises(PackError, match="context_instructions"):
+        load_pack(write(tmp_path, '[questions.a]\nkind = "noul"\ninstructions = "i"\n'
+                                  'context_instructions = ""\n'))  # fmt: skip
+
+
+def test_the_default_pack_words_goal_questions_for_a_context():
+    by_id = {q.id: q for q in load_pack(REPO / "pack.toml")}
+    for qid in ("serves_goal", "goal_drift"):
+        assert "user_context" not in by_id[qid].instructions
+        assert "user_context" in by_id[qid].context_instructions
+    assert by_id["against_context"].needs_context

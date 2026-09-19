@@ -186,3 +186,14 @@ async def test_concurrent_judgments_are_capped():
     # Latency is the query itself, not the time spent waiting for a slot.
     assert all(verdict.latency_ms < 60 for verdict in verdicts)
     await judge.aclose()
+
+
+def test_request_payload_carries_the_context_like_jevs_state():
+    req = JudgeRequest(request().surface, request().event, request().transcript_lines,
+                       request().questions, "prod is fine")  # fmt: skip
+    payload = request_payload(req)
+    assert payload["state"] == {
+        "user_context": "prod is fine",
+        "transcript": request().transcript_lines,
+    }
+    assert json.loads(build_prompt(req)) == payload

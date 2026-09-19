@@ -32,6 +32,8 @@ class JudgeRequest:
     event: dict
     transcript_lines: list[str]
     questions: list[Question]
+    # What the human knows about the session and the agent does not, in their own words.
+    context: str | None = None
 
 
 class JudgeError(Exception):
@@ -49,6 +51,17 @@ class Judge(Protocol):
     async def aclose(self) -> None: ...
 
 
+def request_state(req: JudgeRequest) -> list[str] | dict:
+    """The transcript lines as they are; with a context, an object naming both parts.
+
+    Without a context the state keeps its original shape, so the thresholds fitted on bare
+    transcripts still apply.
+    """
+    if req.context is None:
+        return req.transcript_lines
+    return {"user_context": req.context, "transcript": req.transcript_lines}
+
+
 def request_payload(req: JudgeRequest) -> dict:
     """A request as plain JSON, in the shape of Jev's HTTP body: state plus typed questions.
 
@@ -59,4 +72,4 @@ def request_payload(req: JudgeRequest) -> dict:
         questions[question.id] = {"type": question.kind, "instructions": question.instructions}
         if question.criteria is not None:
             questions[question.id]["criteria"] = question.criteria
-    return {"state": req.transcript_lines, "questions": questions}
+    return {"state": request_state(req), "questions": questions}

@@ -193,6 +193,13 @@ def test_verdict_log_record_carries_the_replay_step():
     assert [record["step"] for record in records(log)] == [3, None]
 
 
+def test_verdict_log_record_carries_the_context_the_judge_was_given():
+    printer, _, log = make_printer()
+    printer.verdict("a/main", "jev", Verdict({}, 1.0, 1, "jev"), flagged=set(), context="offline")
+    printer.verdict("b/main", "jev", Verdict({}, 1.0, 1, "jev"), flagged=set())
+    assert [record["context"] for record in records(log)] == ["offline", None]
+
+
 def test_quarantine_lines_and_log_records():
     printer, out, log = make_printer()
     reason = "exfil=0.93 (evidence 0.48 ≥ 0.20)"

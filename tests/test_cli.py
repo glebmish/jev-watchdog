@@ -131,3 +131,18 @@ def test_control_commands_report_a_missing_watchdog(capsys):
 def test_pack_is_repeatable_and_replaces_the_default():
     args = build_parser().parse_args(["run", "--pack", "pack.toml", "--pack", "packs/canary.toml"])
     assert args.pack == [Path("pack.toml"), Path("packs/canary.toml")]
+
+
+def test_context_options_parse():
+    assert build_parser().parse_args(["run"]).context is None
+    assert build_parser().parse_args(["replay", "c.jsonl", "--context", "x"]).context == "x"
+    args = build_parser().parse_args(["context", "1d8e7c", "some text", "--port", "9"])
+    assert (args.target, args.text, args.clear, args.port) == ("1d8e7c", "some text", False, 9)
+    assert build_parser().parse_args(["context", "1d8e7c", "--clear"]).text is None
+
+
+def test_context_command_needs_text_or_clear(capsys):
+    with pytest.raises(SystemExit):
+        main(["context", "1d8e7c"])
+    with pytest.raises(SystemExit):
+        main(["context", "1d8e7c", "text", "--clear"])

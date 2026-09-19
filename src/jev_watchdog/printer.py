@@ -47,6 +47,7 @@ class Printer:
         verdict: Verdict,
         flagged: set[str],
         step: int | None = None,
+        context: str | None = None,
     ) -> None:
         line = self._prefix(label)
         line.append(f"{judge} ", style="green")
@@ -64,6 +65,7 @@ class Printer:
             judge=judge,
             step=step,  # replay step number; None for live events
             flagged=sorted(flagged),
+            context=context,  # what the judge was told next to the transcript, if anything
             verdict=asdict(verdict),
         )
 

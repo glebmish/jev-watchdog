@@ -137,3 +137,12 @@ async def test_over_limit_message_is_concise():
     with pytest.raises(JudgeError) as err:
         await JevJudge(client=FakeClient(error)).judge(request())
     assert err.value.message == "transcript exceeds Jev's 32k-token state limit (2 lines sent)"
+
+
+async def test_context_travels_in_the_state_next_to_the_unmodified_lines():
+    client = FakeClient()
+    req = JudgeRequest(
+        SurfaceKey("s", "main"), {"hook_event_name": "Stop"}, LINES, QUESTIONS, "prod is fine"
+    )
+    await JevJudge(client=client).judge(req)
+    assert client.calls[0]["state"] == {"user_context": "prod is fine", "transcript": LINES}

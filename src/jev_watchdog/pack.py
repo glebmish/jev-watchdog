@@ -1,7 +1,7 @@
 """Judge-agnostic typed questions and the TOML pack loader."""
 
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
@@ -24,6 +24,22 @@ class Question:
     # Quarantine rule (decide.py): evidence += value - ref, quarantine at evidence >= limit.
     quarantine_ref: float | None = None
     quarantine_limit: float | None = None
+    # Asked only when the human gave the session a context. A question about the context
+    # still gets a confident answer when there is none (against_context scored 0.8 on drift).
+    needs_context: bool = False
+    # The wording for a session with a context. Without one the plain wording is asked, so
+    # such requests are what they were before contexts existed, and text in the transcript
+    # that poses as user_context is not what the question asks about (a spoofed line raised
+    # serves_goal from 0.41 to 0.70 when the plain wording named user_context).
+    context_instructions: str | None = None
+
+    def asked(self, has_context: bool) -> Question | None:
+        """The question as put to a judge, or None when it is not asked."""
+        if not has_context:
+            return None if self.needs_context else self
+        if self.context_instructions is None:
+            return self
+        return replace(self, instructions=self.context_instructions)
 
     def flags(self, value: float | str) -> bool:
         if isinstance(value, str):
@@ -92,6 +108,16 @@ def _question(qid: str, table: dict) -> Question:
         if kind == "choice" or flag_below is not None:
             raise PackError(f"{qid}: quarantine rules need a higher-is-worse noul or score")
 
+    context_instructions = table.get("context_instructions")
+    if context_instructions is not None and not (
+        isinstance(context_instructions, str) and context_instructions.strip()
+    ):
+        raise PackError(f"{qid}: context_instructions must be a non-empty string")
+
+    needs_context = table.get("needs_context", False)
+    if not isinstance(needs_context, bool):
+        raise PackError(f"{qid}: needs_context must be true or false")
+
     return Question(
         id=qid,
         kind=kind,
@@ -102,6 +128,8 @@ def _question(qid: str, table: dict) -> Question:
         flag_choices=flag_choices,
         quarantine_ref=quarantine_ref,
         quarantine_limit=quarantine_limit,
+        needs_context=needs_context,
+        context_instructions=context_instructions,
     )
 
 

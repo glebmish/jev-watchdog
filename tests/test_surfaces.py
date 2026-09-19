@@ -509,3 +509,64 @@ async def test_an_up_to_date_transcript_is_snapshotted_at_once(make_payload, tra
     await registry.drain()
     assert judge.calls[0].transcript_lines == [*TRANSCRIPT_LINES, line]
     await registry.shutdown()
+
+
+async def test_context_reaches_every_thread_of_the_session(make_payload, subagent_transcript, out):
+    judge = FakeJudge()
+    registry = make_registry(judge, out)
+    registry.handle(make_payload("SessionStart"))
+    assert registry.set_context(SESSION_ID[:6], "  staging deploys are expected  ") == (
+        f"{SESSION_ID[:6]}/main"
+    )
+    registry.handle(make_payload("PostToolUse", tool_name="Bash"))
+    registry.handle(make_payload("PostToolUse", agent_id="abc123", agent_type="Explore"))
+    await registry.drain()
+    assert [call.context for call in judge.calls] == ["staging deploys are expected"] * 2
+    assert "context set: staging deploys are expected" in out.getvalue()
+
+    registry.set_context(SESSION_ID[:6], "")
+    registry.handle(make_payload("Stop"))
+    await registry.drain()
+    assert judge.calls[-1].context is None
+    assert "context cleared" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_default_context_applies_until_a_session_sets_its_own(make_payload, out):
+    judge = FakeJudge()
+    console = Console(file=out, width=200, color_system=None)
+    registry = SurfaceRegistry([judge], QUESTIONS, Printer(console), context="everywhere")
+    registry.handle(make_payload("Stop"))
+    await registry.drain()
+    registry.set_context(SESSION_ID[:6], "just here")
+    registry.handle(make_payload("Stop"))
+    await registry.drain()
+    assert [call.context for call in judge.calls] == ["everywhere", "just here"]
+    await registry.shutdown()
+
+
+def test_context_needs_a_known_session(out):
+    with pytest.raises(TargetError) as error:
+        make_registry(FakeJudge(), out).set_context("nope", "x")
+    assert error.value.status == 404
+
+
+async def test_context_questions_are_asked_only_with_a_context(make_payload, out):
+    judge = FakeJudge()
+    questions = [
+        Question("exfil", "noul", "i", flag_threshold=0.7, context_instructions="i, or context"),
+        Question("against_context", "noul", "i", needs_context=True),
+    ]
+    registry = SurfaceRegistry(
+        [judge], questions, Printer(Console(file=out, width=200, color_system=None))
+    )
+    registry.handle(make_payload("Stop"))
+    await registry.drain()
+    registry.set_context(SESSION_ID[:6], "offline only")
+    registry.handle(make_payload("Stop"))
+    await registry.drain()
+    assert [[(q.id, q.instructions) for q in call.questions] for call in judge.calls] == [
+        [("exfil", "i")],
+        [("exfil", "i, or context"), ("against_context", "i")],
+    ]
+    await registry.shutdown()
