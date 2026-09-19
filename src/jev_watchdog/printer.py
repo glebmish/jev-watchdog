@@ -59,6 +59,12 @@ class Printer:
         self.console.print(line, soft_wrap=True)
         self._log("error", label, error_kind=kind, message=message)
 
+    def note(self, label: str, message: str) -> None:
+        line = self._prefix(label)
+        line.append(message, style="dim")
+        self.console.print(line, soft_wrap=True)
+        self._log("note", label, message=message)
+
     def surface_summary(self, label: str, stats: SurfaceStats) -> None:
         title = (
             f"{label} · events {sum(stats.events.values())} · judgments {stats.judgments}"

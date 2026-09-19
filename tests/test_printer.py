@@ -110,3 +110,16 @@ def test_works_without_a_log_file():
     out = io.StringIO()
     Printer(Console(file=out, width=120, color_system=None)).event("x", {"hook_event_name": "Stop"})
     assert "Stop" in out.getvalue()
+
+
+def test_note_line_is_printed_and_logged():
+    printer, out, log = make_printer()
+    printer.note("012345/main", "no transcript yet [registered only]")
+    assert "012345/main" in out.getvalue()
+    assert "no transcript yet [registered only]" in out.getvalue()
+    assert records(log)[0] == {
+        "ts": "2026-09-19T15:02:11",
+        "kind": "note",
+        "surface": "012345/main",
+        "message": "no transcript yet [registered only]",
+    }

@@ -5,12 +5,16 @@ TRANSCRIPT_LINES = [
     '{"type":"user","message":"fix the test"}',
     '{"type":"assistant","message":"ok"}',
 ]
+BOOKKEEPING_LINES = [
+    '{"type":"queue-operation","operation":"enqueue"}',
+    '{"type":"attachment","attachment":{"type":"skill_listing","content":"huge"}}',
+]
 
 
 @pytest.fixture
 def transcript(tmp_path):
     path = tmp_path / f"{SESSION_ID}.jsonl"
-    path.write_text("\n".join(TRANSCRIPT_LINES) + "\n", encoding="utf-8")
+    path.write_text("\n".join([*BOOKKEEPING_LINES, *TRANSCRIPT_LINES]) + "\n", encoding="utf-8")
     return path
 
 

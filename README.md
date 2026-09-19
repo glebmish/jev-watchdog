@@ -3,11 +3,11 @@
 Observe-only watchdog over Claude Code agents. It listens to Claude Code hooks,
 treats every agent thread (the main thread and each subagent) as a separate
 *surface*, and on every relevant hook event asks a judge — [Jev](https://docs.typesafe.ai)
-by default — a pack of typed questions about that thread's transcript. It prints
+by default — a pack of typed questions about that thread's conversation. It prints
 every event and verdict and accumulates statistics. It never talks back to the agent.
 
-> **Privacy:** the whole transcript JSONL of every watched thread is sent to
-> TypeSafe **unredacted**, including any secrets the agent read. Prototype only;
+> **Privacy:** every user and assistant line of every watched thread's transcript is
+> sent to TypeSafe **unredacted**, including any secrets the agent read. Prototype only;
 > use it on sessions where that is acceptable.
 
 ## Run
@@ -40,9 +40,18 @@ Options: `--port` (default 8787; the plugin's URLs are fixed to 8787), `--judge 
 15:02:13 a1b2c3/main                judge error over_limit: ...
 ```
 
-`!` marks an answer past its flag threshold. Transcripts are sent whole, so long
-sessions exceed Jev's 32k-token state limit and show up as `over_limit` errors —
-that is expected in this prototype.
+`!` marks an answer past its flag threshold.
+
+## What is sent
+
+Only the conversation: transcript lines of type `user` or `assistant` that are not
+`isMeta`, each byte-identical to the file. Harness bookkeeping (attachments such as skill
+listings and prompt snapshots, queue operations, system notes) is dropped — it was ~75%
+of a young transcript. There is still no windowing, so a long enough session exceeds
+Jev's 32k-token state limit and shows up as `over_limit` errors.
+
+Session start is registration only: `SessionStart` never judges, and an event that
+arrives before the transcript has any conversation in it just registers the surface.
 
 ## Questions
 
@@ -87,3 +96,17 @@ One headless session (`claude -p`, Claude Code 2.1.278, jev-1.13.0) that spawned
   `repeat_failed` (0.48) crept up as the transcript grew although nothing was denied or
   failed — candidates for rewording or for a "nothing was denied" guard question.
 - `SessionStart` cannot use an `http` hook; the `curl` command hook works.
+
+## Second run, with trimming (2026-09-19)
+
+Same task after dropping bookkeeping lines: 14 events, 10 verdicts, **0 errors**, $0.0028.
+
+- The two transcripts from the first run shrink from ~42.8k → 2.7k tokens (`main`, 94%)
+  and ~29.7k → 7.2k tokens (`Explore`, 76%).
+- First subagent verdict at 2.8k tokens instead of 17.6k; the whole thread stayed under
+  14k. p50 latency 291 ms (was 535 ms), p95 892 ms.
+- The `denied_reroute` / `repeat_failed` creep from the first run disappeared
+  (0.04–0.11 throughout), so it was caused by the bookkeeping text, not the question.
+- `exfil` sits at 0.29–0.54 on a purely local read-only task — the next question to reword.
+- Still true: `UserPromptSubmit` is judged against a transcript that does not contain the
+  new prompt yet, and tool results will eventually push long threads over the limit.

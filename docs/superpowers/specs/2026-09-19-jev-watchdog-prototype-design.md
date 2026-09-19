@@ -20,10 +20,11 @@ on?** It is observe-only.
 - No daemon, no background service, no persistence beyond a run log.
 - No interaction back to the agent: no nudge, deny, quarantine or kill. The
   hook endpoint always returns an empty `200`.
-- No state construction: no windowing, summarising, truncation or redaction.
-  The transcript JSONL is sent as is, whole. Transcripts over Jev's limit
-  (32k tokens for state + longest question) produce a judge error, which is
-  reported like any other event.
+- No state construction beyond line filtering: no windowing, summarising,
+  truncation, rewriting or redaction. Only conversation lines are sent (see
+  "Transcript trimming"), each one byte-identical to the file. Transcripts
+  still over Jev's limit (32k tokens for state + longest question) produce a
+  judge error, which is reported like any other event.
 - No Codex support, no transcript tailing as a second ingest path.
 - No LLM escalation tier, no rules tier.
 - No thresholds-to-actions logic. Accumulators are read-only statistics.
@@ -157,8 +158,29 @@ Transcript path resolution (`transcript.py`):
 4. The verdict updates the surface's statistics and global statistics, is
    printed, and is appended to the run log.
 
-`state` sent to Jev is `transcript_lines`: a list of the raw JSONL lines,
-unmodified and complete. The hook payload itself is not added to state.
+`state` sent to Jev is `transcript_lines`: the transcript's conversation
+lines, each unmodified. The hook payload itself is not added to state.
+
+### Transcript trimming (added after the first run)
+
+The first end-to-end run showed ~75% of a young transcript is harness
+bookkeeping — `attachment` lines (`skill_listing`, `prompt_snapshot`,
+`agent_listing_delta`, instructions, reminders), `queue-operation`, `system`,
+`last-prompt`, `bridge-session`, `file-history-snapshot` — which exhausted the
+32k budget within ~6 events and added noise to the answers.
+
+`transcript.conversation_lines()` is a keep-list: a line is sent only if it
+parses as a JSON object with `type` `user` or `assistant` and is not `isMeta`
+(harness-injected text such as skill bodies). Unparseable lines (e.g. a
+half-flushed last line) are dropped. Kept lines are never modified.
+
+### Session start is registration only
+
+`SessionStart` never judges. The first `UserPromptSubmit` of a session fires
+before Claude Code has created the transcript file, so a judging event whose
+transcript does not exist yet, or has no conversation lines yet, registers the
+surface and prints a dim note — no judge call, no error. Other read failures
+(`OSError`) are still reported as `transcript` errors.
 
 Known race, accepted: a hook can fire before Claude Code has flushed the
 corresponding line to the transcript, so a verdict may lag one line behind.

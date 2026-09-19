@@ -73,7 +73,9 @@ async def test_transcript_is_snapshotted_at_receipt(make_payload, transcript, ou
     registry = make_registry(judge, out)
     registry.handle(make_payload())
     registry.handle(make_payload())  # queued behind the first
-    transcript.write_text("\n".join([*TRANSCRIPT_LINES, '{"type":"late"}']) + "\n")
+    transcript.write_text(
+        "\n".join([*TRANSCRIPT_LINES, '{"type":"assistant","message":"late"}']) + "\n"
+    )
     await registry.drain()
     assert [len(call.transcript_lines) for call in judge.calls] == [2, 2]
     await registry.shutdown()
@@ -142,10 +144,35 @@ async def test_unexpected_judge_exception_does_not_kill_worker(make_payload, out
     await registry.shutdown()
 
 
-async def test_missing_transcript_is_an_error_without_a_judge_call(make_payload, out):
+async def test_no_transcript_yet_is_registration_only(make_payload, out):
+    # The first UserPromptSubmit of a session fires before Claude Code creates the file.
     judge = FakeJudge()
     registry = make_registry(judge, out)
-    registry.handle(make_payload(transcript_path="/nonexistent/x.jsonl"))
+    registry.handle(make_payload("UserPromptSubmit", transcript_path="/nonexistent/x.jsonl"))
+    await registry.drain()
+    assert judge.calls == []
+    assert registry.stats.errors == {}
+    assert set(registry.surfaces) == {SurfaceKey(SESSION_ID, MAIN)}
+    assert "registered only" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_transcript_without_conversation_is_registration_only(make_payload, transcript, out):
+    transcript.write_text('{"type":"attachment","attachment":{"type":"skill_listing"}}\n')
+    judge = FakeJudge()
+    registry = make_registry(judge, out)
+    registry.handle(make_payload())
+    await registry.drain()
+    assert judge.calls == []
+    assert registry.stats.errors == {}
+    assert "registered only" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_unreadable_transcript_is_an_error_without_a_judge_call(make_payload, tmp_path, out):
+    judge = FakeJudge()
+    registry = make_registry(judge, out)
+    registry.handle(make_payload(transcript_path=str(tmp_path)))  # a directory
     await registry.drain()
     assert judge.calls == []
     assert registry.stats.errors == {"transcript": 1}

@@ -8,7 +8,13 @@ from jev_watchdog.judge.base import Judge, JudgeError, JudgeRequest
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
 from jev_watchdog.stats import GlobalStats, SurfaceStats
-from jev_watchdog.transcript import SurfaceKey, read_lines, resolve_transcript_path, surface_key
+from jev_watchdog.transcript import (
+    SurfaceKey,
+    conversation_lines,
+    read_lines,
+    resolve_transcript_path,
+    surface_key,
+)
 
 LIFECYCLE_EVENTS = frozenset({"SessionStart", "SubagentStart", "SessionEnd"})
 JUDGING_EVENTS = frozenset(
@@ -78,11 +84,18 @@ class SurfaceRegistry:
                     self._enqueue(other, None)
         elif event in JUDGING_EVENTS:
             try:
-                lines = read_lines(surface.transcript_path)
+                lines = conversation_lines(read_lines(surface.transcript_path))
+            except FileNotFoundError:
+                lines = []  # session start: the hook fires before the transcript exists
             except OSError as exc:
                 self._error(surface, "transcript", str(exc))
                 return
-            self._enqueue(surface, Job(payload, lines))
+            if lines:
+                self._enqueue(surface, Job(payload, lines))
+            else:
+                self.printer.note(
+                    surface.label, "no conversation in transcript yet, registered only"
+                )
 
     def bad_payload(self, message: str) -> None:
         self.stats.record_error("payload")

@@ -3,6 +3,7 @@ from pathlib import Path
 from jev_watchdog.transcript import (
     MAIN,
     SurfaceKey,
+    conversation_lines,
     read_lines,
     resolve_transcript_path,
     surface_key,
@@ -59,3 +60,26 @@ def test_read_lines_keeps_lines_identical(tmp_path):
     path = tmp_path / "t.jsonl"
     path.write_text(f"{first}\n\n{second}\n", encoding="utf-8")
     assert read_lines(path) == [first, second]
+
+
+def test_conversation_lines_keeps_only_user_and_assistant_lines_unmodified():
+    user = '{"type":"user","message":{"role":"user","content":"fix  the test"}}'
+    assistant = '{"type": "assistant", "message": {"content": [{"type": "tool_use"}]}}'
+    tool_result = '{"type":"user","message":{"content":[{"type":"tool_result","content":"ok"}]}}'
+    lines = [
+        '{"type":"attachment","attachment":{"type":"skill_listing","content":"huge"}}',
+        '{"type":"queue-operation","operation":"enqueue"}',
+        user,
+        '{"type":"user","isMeta":true,"message":{"content":"Base directory for this skill"}}',
+        assistant,
+        '{"type":"system","subtype":"turn_duration"}',
+        tool_result,
+        '{"type":"file-history-snapshot"}',
+        '{"type":"assistant","message":{"content":"half-flushed li',
+        '["not", "an", "object"]',
+    ]
+    assert conversation_lines(lines) == [user, assistant, tool_result]
+
+
+def test_conversation_lines_of_nothing_is_nothing():
+    assert conversation_lines([]) == []
