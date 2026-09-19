@@ -22,6 +22,7 @@ uv run jev-watchdog run --judge fake    # offline, deterministic answers
 
 # several judges side by side, to compare answers and latency
 uv run jev-watchdog run --judge jev --judge claude:claude-haiku-4-5 --judge claude:claude-sonnet-5
+uv run jev-watchdog run --judge jev --judge codex:gpt-5.5   # GPT through the Codex CLI
 ```
 
 In another terminal, start Claude Code with the hooks plugin:
@@ -173,6 +174,7 @@ including the watched agent, can set it, and a context can talk the soft questio
 |---|---|---|
 | `jev`, `jev:jev-preview` | Jev via `typesafe-sdk` | `TYPESAFE_API_KEY` or the key file |
 | `claude`, `claude:<model-id>` | Claude via the Claude Agent SDK (default `claude-opus-5`) | your local Claude Code login; usage is billed to it |
+| `codex`, `codex:<model>` | GPT via the Codex CLI, `codex exec` (default `gpt-5.5`) | your local ChatGPT login (`codex login`); usage counts against the plan |
 | `fake` | deterministic pseudo-random answers, offline | none |
 | `fake:WORD` | offline marker mode: flags nothing until a judged tool call's input contains WORD, then answers 1.0 on every question with a quarantine rule | none |
 
@@ -187,6 +189,17 @@ schema built from the pack stands in for Jev's typed answers. Each judgment is a
 one-shot session with no tools, no MCP servers, no settings/hooks/plugins and no session
 file, so it cannot act on what it reads or re-trigger the watchdog. Thinking is off unless
 `--claude-thinking` is given.
+
+The Codex judge follows the same rules through `codex exec`: no instructions
+(`-c instructions=""`), the request body on stdin, `--output-schema` for the answers, no user
+config, no session file, an empty working directory, reasoning effort `low` (the lowest a
+ChatGPT login offers) unless `--claude-thinking` is given. Codex has no "no tools" switch and
+no turn limit, so the judge is disarmed instead: every tool-providing feature is disabled,
+the code-mode host is off, and the read-only sandbox refuses what is left. `gpt-5.5` then
+carries ~0.5k tokens of harness text; the code-mode models (`gpt-5.6-*`, `gpt-6-astra`) keep a
+~3.5k-token tool preamble whose `exec` tool fails closed. A live test tells both to write a
+file, run a command and spawn an agent, and checks that nothing happens. The feature list is
+pinned to codex 0.153 (`DISABLED_FEATURES` in `judge/codex_exec.py`).
 
 ## Output
 
@@ -263,14 +276,15 @@ quarantined = true
 Implement the `Judge` protocol in `src/jev_watchdog/judge/base.py`
 (`name`, `async judge(JudgeRequest) -> Verdict`, `async aclose()`), add a factory to
 `JUDGES` in `src/jev_watchdog/judge/registry.py`, and select it with `--judge <name>[:model]`.
-Each SDK is imported by exactly one module (`judge/jev.py`, `judge/claude_agent.py`).
-`request_payload()` in `judge/base.py` gives any free-form backend the same input as Jev.
+Each SDK or CLI is known to exactly one module (`judge/jev.py`, `judge/claude_agent.py`,
+`judge/codex_exec.py`). `build_prompt()`, `answer_schema()` and `schema_answers()` in
+`judge/base.py` give any free-form backend the same input as Jev and a schema for its answers.
 
 ## Tests
 
 ```bash
 uv run pytest            # offline
-uv run pytest -m live    # real Jev calls (needs a key) and real Claude calls (needs a login)
+uv run pytest -m live    # real Jev calls (needs a key), real Claude and Codex calls (need logins)
 ```
 
 ## First run (2026-09-19)

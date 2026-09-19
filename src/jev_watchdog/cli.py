@@ -91,7 +91,8 @@ def _add_judging_options(command: argparse.ArgumentParser) -> None:
     command.add_argument(
         "--claude-thinking",
         action="store_true",
-        help="leave thinking on for claude judges (default: off, like a non-reasoning judge)",
+        help="leave thinking on for claude judges and the model's default reasoning effort for "
+        "codex judges (default: off / low, like a non-reasoning judge)",
     )
     command.add_argument(
         "--pack",

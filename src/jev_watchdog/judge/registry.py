@@ -1,6 +1,6 @@
 """Judge spec -> judge. Adding a backend = one class + one entry here.
 
-A spec is `name` or `name:model`, e.g. `jev`, `claude:claude-haiku-4-5`.
+A spec is `name` or `name:model`, e.g. `jev`, `claude:claude-haiku-4-5`, `codex:gpt-5.5`.
 """
 
 from collections.abc import Callable
@@ -14,7 +14,7 @@ from jev_watchdog.judge.fake import FakeJudge
 class JudgeConfig:
     api_key: str | None = None  # jev
     model: str | None = None  # from the spec; None = the backend's default
-    thinking: bool = False  # claude
+    thinking: bool = False  # claude, codex
 
 
 # Backends import their SDK lazily so an unused one costs nothing at startup.
@@ -30,9 +30,16 @@ def _make_claude(config: JudgeConfig) -> Judge:
     return ClaudeAgentJudge(model=config.model or DEFAULT_MODEL, thinking=config.thinking)
 
 
+def _make_codex(config: JudgeConfig) -> Judge:
+    from jev_watchdog.judge.codex_exec import DEFAULT_MODEL, CodexExecJudge
+
+    return CodexExecJudge(model=config.model or DEFAULT_MODEL, thinking=config.thinking)
+
+
 JUDGES: dict[str, Callable[[JudgeConfig], Judge]] = {
     "jev": _make_jev,
     "claude": _make_claude,
+    "codex": _make_codex,
     # fake:WORD is the marker mode, for end-to-end tests of quarantine without a backend
     "fake": lambda config: FakeJudge(
         name=f"fake:{config.model}" if config.model else "fake", trip_on=config.model

@@ -113,7 +113,7 @@ async def test_aclose_closes_the_client():
 
 
 def test_registry_builds_judges_from_specs():
-    assert set(JUDGES) == {"jev", "claude", "fake"}
+    assert set(JUDGES) == {"jev", "claude", "codex", "fake"}
     assert make_judge("fake", JudgeConfig()).name == "fake"
     assert make_judge("jev", JudgeConfig(api_key="apikey_test")).name == "jev"
     assert (

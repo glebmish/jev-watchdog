@@ -1,5 +1,6 @@
 """The judge boundary. Backends implement Judge; nothing else knows about them."""
 
+import json
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -73,3 +74,40 @@ def request_payload(req: JudgeRequest) -> dict:
         if question.criteria is not None:
             questions[question.id]["criteria"] = question.criteria
     return {"state": request_state(req), "questions": questions}
+
+
+def build_prompt(req: JudgeRequest) -> str:
+    """Exactly what Jev receives, as JSON. No instructions are added around it."""
+    return json.dumps(request_payload(req), ensure_ascii=False)
+
+
+def answer_schema(questions: list[Question]) -> dict:
+    """A JSON schema that stands in for Jev's typed answers on a free-form backend."""
+    return {
+        "type": "object",
+        "properties": {q.id: _answer_schema(q) for q in questions},
+        "required": [q.id for q in questions],
+        "additionalProperties": False,
+    }
+
+
+def _answer_schema(question: Question) -> dict:
+    if question.kind == "noul":
+        return {"type": "number", "minimum": 0, "maximum": 1}
+    if question.kind == "score":
+        return {"type": "number", "minimum": 0, "maximum": len(question.criteria) - 1}
+    return {"type": "string", "enum": list(question.criteria)}
+
+
+def schema_answers(questions: list[Question], output: dict) -> dict[str, Answer]:
+    """Answers out of an object shaped by answer_schema(); out-of-range values are clamped."""
+    answers = {}
+    for question in questions:
+        value = output.get(question.id)
+        if question.kind == "choice":
+            if value in question.criteria:
+                answers[question.id] = Answer(value)
+        elif isinstance(value, int | float) and not isinstance(value, bool):
+            top = 1 if question.kind == "noul" else len(question.criteria) - 1
+            answers[question.id] = Answer(float(min(max(value, 0), top)))
+    return answers

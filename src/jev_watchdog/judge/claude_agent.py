@@ -9,7 +9,6 @@ still adds ~3.5k tokens of its own (structured-output tool), which cannot be rem
 """
 
 import asyncio
-import json
 import shutil
 import tempfile
 import time
@@ -18,8 +17,14 @@ from typing import Any
 
 from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
 
-from jev_watchdog.judge.base import Answer, JudgeError, JudgeRequest, Verdict, request_payload
-from jev_watchdog.pack import Question
+from jev_watchdog.judge.base import (
+    JudgeError,
+    JudgeRequest,
+    Verdict,
+    answer_schema,
+    build_prompt,
+    schema_answers,
+)
 
 DEFAULT_MODEL = "claude-opus-5"
 TIMEOUT_S = 120.0
@@ -87,7 +92,7 @@ class ClaudeAgentJudge:
 
         usage = result.usage or {}
         return Verdict(
-            answers=_answers(req.questions, result.structured_output),
+            answers=schema_answers(req.questions, result.structured_output),
             latency_ms=latency_ms,
             input_tokens=sum(
                 usage.get(key) or 0
@@ -119,41 +124,6 @@ class ClaudeAgentJudge:
         if result is None:
             raise JudgeError("other", "the query ended without a result")
         return result
-
-
-def answer_schema(questions: list[Question]) -> dict:
-    return {
-        "type": "object",
-        "properties": {q.id: _answer_schema(q) for q in questions},
-        "required": [q.id for q in questions],
-        "additionalProperties": False,
-    }
-
-
-def _answer_schema(question: Question) -> dict:
-    if question.kind == "noul":
-        return {"type": "number", "minimum": 0, "maximum": 1}
-    if question.kind == "score":
-        return {"type": "number", "minimum": 0, "maximum": len(question.criteria) - 1}
-    return {"type": "string", "enum": list(question.criteria)}
-
-
-def build_prompt(req: JudgeRequest) -> str:
-    """Exactly what Jev receives, as JSON. No instructions are added around it."""
-    return json.dumps(request_payload(req), ensure_ascii=False)
-
-
-def _answers(questions: list[Question], output: dict) -> dict[str, Answer]:
-    answers = {}
-    for question in questions:
-        value = output.get(question.id)
-        if question.kind == "choice":
-            if value in question.criteria:
-                answers[question.id] = Answer(value)
-        elif isinstance(value, int | float) and not isinstance(value, bool):
-            top = 1 if question.kind == "noul" else len(question.criteria) - 1
-            answers[question.id] = Answer(float(min(max(value, 0), top)))
-    return answers
 
 
 def _error_kind(status: int | None, detail: str) -> str:
