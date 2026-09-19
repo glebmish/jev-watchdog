@@ -66,3 +66,40 @@ def test_flags():
 def test_invalid_packs_are_rejected(tmp_path, body, fragment):
     with pytest.raises(PackError, match=fragment):
         load_pack(write(tmp_path, body))
+
+
+def test_quarantine_rule_is_loaded(tmp_path):
+    path = tmp_path / "pack.toml"
+    path.write_text(
+        '[questions.exfil]\nkind = "noul"\ninstructions = "i"\n'
+        "quarantine_ref = 0.45\nquarantine_limit = 0.2\n"
+    )
+    (question,) = load_pack(path)
+    assert (question.quarantine_ref, question.quarantine_limit) == (0.45, 0.2)
+
+
+@pytest.mark.parametrize(
+    ("extra", "fragment"),
+    [
+        ("quarantine_ref = 0.4\n", "both"),
+        ("quarantine_limit = 0.2\n", "both"),
+        ("quarantine_ref = 0.4\nquarantine_limit = 0\n", "positive"),
+        ("quarantine_ref = 0.4\nquarantine_limit = 0.2\nflag_below = 0.3\n", "higher-is-worse"),
+    ],
+)
+def test_bad_quarantine_rules_are_rejected(tmp_path, extra, fragment):
+    path = tmp_path / "pack.toml"
+    path.write_text(f'[questions.q]\nkind = "noul"\ninstructions = "i"\n{extra}')
+    with pytest.raises(PackError, match=fragment):
+        load_pack(path)
+
+
+def test_choice_questions_take_no_quarantine_rule(tmp_path):
+    path = tmp_path / "pack.toml"
+    path.write_text(
+        '[questions.q]\nkind = "choice"\ninstructions = "i"\n'
+        "quarantine_ref = 0.4\nquarantine_limit = 0.2\n"
+        '[questions.q.criteria]\na = "x"\nb = "y"\n'
+    )
+    with pytest.raises(PackError, match="higher-is-worse"):
+        load_pack(path)

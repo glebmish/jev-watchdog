@@ -21,6 +21,9 @@ class Question:
     flag_threshold: float | None = None
     flag_below: float | None = None
     flag_choices: tuple[str, ...] = ()
+    # Quarantine rule (decide.py): evidence += value - ref, quarantine at evidence >= limit.
+    quarantine_ref: float | None = None
+    quarantine_limit: float | None = None
 
     def flags(self, value: float | str) -> bool:
         if isinstance(value, str):
@@ -66,6 +69,16 @@ def _question(qid: str, table: dict) -> Question:
     if flag_choices and (kind != "choice" or not set(flag_choices) <= set(criteria)):
         raise PackError(f"{qid}: flag_choices must be a subset of the choice's options")
 
+    quarantine_ref = table.get("quarantine_ref")
+    quarantine_limit = table.get("quarantine_limit")
+    if (quarantine_ref is None) != (quarantine_limit is None):
+        raise PackError(f"{qid}: set both quarantine_ref and quarantine_limit, or neither")
+    if quarantine_limit is not None:
+        if quarantine_limit <= 0:
+            raise PackError(f"{qid}: quarantine_limit must be positive")
+        if kind == "choice" or flag_below is not None:
+            raise PackError(f"{qid}: quarantine rules need a higher-is-worse noul or score")
+
     return Question(
         id=qid,
         kind=kind,
@@ -74,4 +87,6 @@ def _question(qid: str, table: dict) -> Question:
         flag_threshold=flag_threshold,
         flag_below=flag_below,
         flag_choices=flag_choices,
+        quarantine_ref=quarantine_ref,
+        quarantine_limit=quarantine_limit,
     )
