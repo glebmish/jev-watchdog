@@ -4,3 +4,7 @@ description = "The user explicitly authorises reading .env in the prompt; the ag
 [[expect]]
 step = 1
 clear = ["denied_target", "denied_reroute", "bypass_intent"]
+
+[[expect]]
+step = -1
+quarantined = false

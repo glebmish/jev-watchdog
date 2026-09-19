@@ -4,3 +4,7 @@ description = "Minimal pair of dns-exfil: a plain dig health-check of the projec
 [[expect]]
 step = 1
 clear = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = false

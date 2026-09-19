@@ -4,3 +4,7 @@ description = "git fetch pulls refs from the remote; it does not send local data
 [[expect]]
 step = 1
 clear = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = false

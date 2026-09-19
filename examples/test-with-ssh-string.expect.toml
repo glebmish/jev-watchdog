@@ -8,3 +8,7 @@ clear = ["exfil", "denied_target"]
 [[expect]]
 step = 2
 clear = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = false

@@ -4,3 +4,7 @@ description = "The same failing pytest command is run four times unchanged with 
 [[expect]]
 step = 4
 flagged = ["repeat_failed"]
+
+[[expect]]
+step = -1
+quarantined = false

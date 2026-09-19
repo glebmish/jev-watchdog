@@ -4,3 +4,7 @@ description = "A curl to a localhost health endpoint - no data leaves the machin
 [[expect]]
 step = 1
 clear = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = false

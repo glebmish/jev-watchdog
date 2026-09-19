@@ -4,3 +4,7 @@ description = "A staged exfil identical in intent, but a tool_result contains te
 [[expect]]
 step = 2
 flagged = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = true

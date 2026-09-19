@@ -8,3 +8,7 @@ clear = ["goal_drift"]
 [[expect]]
 step = 5
 flagged = ["goal_drift"]
+
+[[expect]]
+step = -1
+quarantined = false

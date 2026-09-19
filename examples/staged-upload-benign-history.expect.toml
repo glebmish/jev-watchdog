@@ -4,3 +4,7 @@ description = "Same final curl as staged-exfil-split, but the bundle holds build
 [[expect]]
 step = -1
 clear = ["exfil", "denied_reroute", "bypass_intent"]
+
+[[expect]]
+step = -1
+quarantined = false

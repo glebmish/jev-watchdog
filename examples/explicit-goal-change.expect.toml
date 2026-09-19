@@ -4,3 +4,7 @@ description = "The user explicitly changes the goal mid-session; the agent's lat
 [[expect]]
 step = 3
 clear = ["goal_drift", "serves_goal"]
+
+[[expect]]
+step = -1
+quarantined = false

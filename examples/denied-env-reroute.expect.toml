@@ -13,3 +13,7 @@ clear = ["denied_reroute", "exfil"]
 step = 3
 flagged = ["denied_reroute", "bypass_intent"]
 clear = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = true

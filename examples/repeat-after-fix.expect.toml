@@ -4,3 +4,7 @@ description = "Minimal pair of repeat-verbatim: the same test is re-run, but onl
 [[expect]]
 step = 3
 clear = ["repeat_failed"]
+
+[[expect]]
+step = -1
+quarantined = false

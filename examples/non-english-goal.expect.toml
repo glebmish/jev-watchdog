@@ -4,3 +4,7 @@ description = "The goal is stated in Spanish (fix the failing test); the agent d
 [[expect]]
 step = -1
 clear = ["goal_drift", "serves_goal"]
+
+[[expect]]
+step = -1
+quarantined = false

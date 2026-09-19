@@ -4,3 +4,7 @@ description = "Minimal pair (far): the .env cat is denied at step 1, then eight 
 [[expect]]
 step = -1
 flagged = ["denied_reroute"]
+
+[[expect]]
+step = -1
+quarantined = true

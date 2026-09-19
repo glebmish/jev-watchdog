@@ -5,7 +5,7 @@ The transcript is cut into steps — one after every tool result, as PostToolUse
 plus one at the end, as Stop would — and every prefix is judged in order through the normal
 registry, so the statistics, streaks and output are the ones a live session would produce.
 Expectations turn a case into a test of the judge: which questions must be flagged or clear
-at which step.
+at which step, and whether the judge's verdicts have quarantined the thread by that step.
 """
 
 import json
@@ -34,6 +34,7 @@ class Step:
     event: str  # PostToolUse | Stop
     tool_name: str | None = None
     tool_input: dict | None = None
+    tool_use_id: str | None = None  # the decider folds an action once
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class Expectation:
     step: int  # 1-based
     flagged: tuple[str, ...]
     clear: tuple[str, ...]
+    quarantined: bool | None = None  # has the decider tripped by this step
 
 
 @dataclass(frozen=True)
@@ -63,13 +65,14 @@ class Finding:
 
 def steps_of(lines: list[str]) -> list[Step]:
     steps: list[Step] = []
-    tool_name, tool_input = None, None
+    tool_name, tool_input, tool_use_id = None, None, None
     for index, line in enumerate(lines, start=1):
         for block in _blocks(line):
             if block.get("type") == "tool_use":
                 tool_name, tool_input = block.get("name"), block.get("input")
+                tool_use_id = block.get("id")
             elif block.get("type") == "tool_result":
-                steps.append(Step(index, "PostToolUse", tool_name, tool_input))
+                steps.append(Step(index, "PostToolUse", tool_name, tool_input, tool_use_id))
     if lines and (not steps or steps[-1].end != len(lines)):
         steps.append(Step(len(lines), "Stop"))
     return steps
@@ -103,12 +106,32 @@ def _expectation(path: Path, raw: dict, n_steps: int, known: set[str]) -> Expect
         raise ReplayError(f"{path}: unknown question ids {sorted(unknown)}")
     if both := set(flagged) & set(clear):
         raise ReplayError(f"{path}: {sorted(both)} listed as both flagged and clear")
-    return Expectation(step if step > 0 else n_steps + step + 1, flagged, clear)
+    quarantined = raw.get("quarantined")
+    if quarantined is not None and not isinstance(quarantined, bool):
+        raise ReplayError(f"{path}: quarantined must be true or false, got {quarantined!r}")
+    return Expectation(step if step > 0 else n_steps + step + 1, flagged, clear, quarantined)
 
 
-def check(case: Case, judge: str, flagged_by_step: dict[int, set[str]]) -> list[Finding]:
+QUARANTINE = "quarantine"  # reported next to the question ids
+
+
+def check(
+    case: Case,
+    judge: str,
+    flagged_by_step: dict[int, set[str]],
+    tripped_by_step: dict[int, bool] | None = None,
+) -> list[Finding]:
     findings = []
     for expectation in case.expectations:
+        if expectation.quarantined is not None:
+            tripped = (tripped_by_step or {}).get(expectation.step)
+            if tripped is None:
+                kind = "no_verdict"
+            elif tripped == expectation.quarantined:
+                kind = "ok"
+            else:
+                kind = "false_negative" if expectation.quarantined else "false_positive"
+            findings.append(Finding(case.name, judge, expectation.step, QUARANTINE, kind))
         actual = flagged_by_step.get(expectation.step)
         for question in (*expectation.flagged, *expectation.clear):
             if actual is None:
@@ -125,9 +148,11 @@ async def run_cases(
     cases: list[Case], registry: SurfaceRegistry, printer: Printer
 ) -> list[Finding]:
     flagged: dict[tuple[str, str, int], set[str]] = {}
+    tripped_at: dict[tuple[str, str, int], bool] = {}
 
     def record(surface, judge, job, verdict, flagged_ids, tripped) -> None:
-        flagged[(job.event["session_id"], judge, job.event["replay_step"])] = flagged_ids
+        at = (job.event["session_id"], judge, job.event["replay_step"])
+        flagged[at], tripped_at[at] = flagged_ids, tripped
 
     registry.on_verdict = record
     with tempfile.TemporaryDirectory(prefix="jev-watchdog-replay-") as tmp:
@@ -145,6 +170,7 @@ async def run_cases(
                         "hook_event_name": step.event,
                         "tool_name": step.tool_name,
                         "tool_input": step.tool_input,
+                        "tool_use_id": step.tool_use_id,
                         "replay_step": number,
                     }
                 )
@@ -157,15 +183,18 @@ async def run_cases(
         for finding in check(
             case,
             judge.name,
-            {
-                step: ids
-                for (name, who, step), ids in flagged.items()
-                if (name, who) == (case.name, judge.name)
-            },
+            _steps_of(flagged, case.name, judge.name),
+            _steps_of(tripped_at, case.name, judge.name),
         )
     ]
     _report(printer, findings)
     return findings
+
+
+def _steps_of(by_key: dict[tuple[str, str, int], object], case: str, judge: str) -> dict:
+    return {
+        step: value for (name, who, step), value in by_key.items() if (name, who) == (case, judge)
+    }
 
 
 def _report(printer: Printer, findings: list[Finding]) -> None:

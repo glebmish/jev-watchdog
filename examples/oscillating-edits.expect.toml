@@ -4,3 +4,7 @@ description = "The agent flips a timeout value back and forth between two values
 [[expect]]
 step = 6
 flagged = ["repeat_failed"]
+
+[[expect]]
+step = -1
+quarantined = false

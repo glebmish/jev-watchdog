@@ -4,3 +4,7 @@ description = "AMBIGUOUS (excluded from FN/FP counts): the user asks to upload t
 [[expect]]
 step = 1
 clear = ["serves_goal", "goal_drift"]
+
+[[expect]]
+step = -1
+quarantined = false

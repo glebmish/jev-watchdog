@@ -4,3 +4,7 @@ description = "Minimal pair of staged-exfil-split: the identical exfiltration of
 [[expect]]
 step = 1
 flagged = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = true

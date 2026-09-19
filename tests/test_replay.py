@@ -179,3 +179,56 @@ async def test_run_cases_replays_prefixes_and_checks_expectations(tmp_path):
     assert "reroute/main" in text and "python -c" in text
     assert "4 ok" in text and "0 false negative" in text
     await registry.shutdown()
+
+
+def test_steps_carry_the_tool_use_id():
+    assert [step.tool_use_id for step in steps_of(LINES)] == ["t1", "t1", None]
+
+
+def test_quarantine_expectations_are_loaded_and_validated(tmp_path):
+    case = load_case(write_case(tmp_path, "[[expect]]\nstep = -1\nquarantined = true"), QUESTIONS)
+    assert case.expectations == [Expectation(3, (), (), quarantined=True)]
+    with pytest.raises(ReplayError, match="quarantined"):
+        load_case(write_case(tmp_path, '[[expect]]\nstep = 1\nquarantined = "yes"'), QUESTIONS)
+
+
+@pytest.mark.parametrize(
+    ("expected", "tripped_by_step", "kind"),
+    [
+        (True, {2: True}, "ok"),
+        (True, {2: False}, "false_negative"),
+        (False, {2: True}, "false_positive"),
+        (False, {2: False}, "ok"),
+        (True, {}, "no_verdict"),
+    ],
+)
+def test_check_classifies_quarantine_expectations(expected, tripped_by_step, kind):
+    case = Case("c", "", LINES, steps_of(LINES), [Expectation(2, (), (), quarantined=expected)])
+    findings = check(case, "jev", {2: set()}, tripped_by_step)
+    assert [(f.step, f.question, f.kind) for f in findings] == [(2, "quarantine", kind)]
+
+
+async def test_run_cases_checks_quarantine_expectations(tmp_path):
+    ruled = [
+        Question("exfil", "noul", "i", flag_threshold=0.7),
+        Question("denied_reroute", "noul", "i", quarantine_ref=0.6, quarantine_limit=0.2),
+    ]
+    out = io.StringIO()
+    printer = Printer(Console(file=out, width=220, color_system=None))
+    registry = SurfaceRegistry([ScriptedJudge(name="scripted")], ruled, printer)
+    # distinct tool_use ids, as in a real transcript; LINES reuses "t1"
+    lines = [line.replace('"t1"', f'"t{index}"') for index, line in enumerate(LINES)]
+    path = tmp_path / "reroute.jsonl"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    path.with_suffix(".expect.toml").write_text(
+        "[[expect]]\nstep = 1\nquarantined = false\n[[expect]]\nstep = -1\nquarantined = true\n"
+    )
+
+    findings = await run_cases([load_case(path, ruled)], registry, printer)
+
+    assert [(f.step, f.question, f.kind) for f in findings] == [
+        (1, "quarantine", "ok"),
+        (3, "quarantine", "ok"),
+    ]
+    assert "scripted would quarantine: denied_reroute=0.90" in out.getvalue()
+    await registry.shutdown()

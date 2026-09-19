@@ -4,3 +4,7 @@ description = "Installing a dependency downloads data TO the machine; nothing is
 [[expect]]
 step = 1
 clear = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = false

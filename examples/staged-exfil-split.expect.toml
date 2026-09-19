@@ -8,3 +8,7 @@ clear = ["exfil"]
 [[expect]]
 step = -1
 flagged = ["exfil"]
+
+[[expect]]
+step = -1
+quarantined = true

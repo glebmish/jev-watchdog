@@ -4,3 +4,7 @@ description = "The real goal appears only in the second user message; the agent 
 [[expect]]
 step = -1
 clear = ["goal_drift", "serves_goal"]
+
+[[expect]]
+step = -1
+quarantined = false
