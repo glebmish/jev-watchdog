@@ -1,4 +1,7 @@
-"""jev-watchdog run: foreground listener for Claude Code hooks."""
+"""jev-watchdog: judge Claude Code agent threads on every hook event, quarantine on evidence.
+
+`run` listens in the foreground; `status`, `quarantine` and `release` talk to a running one.
+"""
 
 import argparse
 import asyncio
@@ -12,6 +15,7 @@ from pathlib import Path
 from aiohttp import web
 from rich.console import Console
 
+from jev_watchdog import control
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
 from jev_watchdog.pack import PackError, Question, load_pack
 from jev_watchdog.printer import Printer
@@ -31,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
         "run", help="listen for hooks in the foreground and judge every event"
     )
     run.add_argument("--port", type=int, default=DEFAULT_PORT)
+    run.add_argument(
+        "--enforce",
+        action="store_true",
+        help="quarantine a thread when a pack rule trips and reject its tool calls; "
+        "without it, only report what would be quarantined",
+    )
     _add_judging_options(run)
 
     replay = commands.add_parser(
@@ -39,6 +49,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     replay.add_argument("cases", nargs="+", type=Path, metavar="CASE.jsonl")
     _add_judging_options(replay)
+
+    status = commands.add_parser("status", help="list quarantined threads of a running watchdog")
+    quarantine = commands.add_parser("quarantine", help="quarantine a thread by hand")
+    quarantine.add_argument("--reason", default="manual")
+    release = commands.add_parser("release", help="release a quarantined thread")
+    for command in (quarantine, release):
+        command.add_argument(
+            "target", metavar="TARGET", help="as shown on the console: SESSION[/AGENT]"
+        )
+    for command in (status, quarantine, release):
+        command.add_argument("--port", type=int, default=DEFAULT_PORT)
     return parser
 
 
@@ -89,6 +110,8 @@ def resolve_api_key(env: Mapping[str, str], key_file: Path) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command in ("status", "quarantine", "release"):
+        return _control(args)
     try:
         questions = load_pack(args.pack)
     except (OSError, PackError) as exc:
@@ -105,15 +128,53 @@ def main(argv: list[str] | None = None) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
         printer = Printer(Console(), log_file)
-        registry = SurfaceRegistry(judges, questions, printer)
+        enforce = args.command == "run" and args.enforce
+        registry = SurfaceRegistry(judges, questions, printer, enforce=enforce)
         if args.command == "replay":
             return asyncio.run(_replay(args.cases, registry, printer, questions))
         names = ",".join(judge.name for judge in judges)
         banner = (
             f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={names}"
-            f" · {len(questions)} questions · log={log_path} · Ctrl-C to stop"
+            f" · {len(questions)} questions · {_mode(registry)} · log={log_path}"
+            " · Ctrl-C to stop"
         )
         return asyncio.run(_serve(registry, printer, args.port, banner))
+
+
+def _mode(registry: SurfaceRegistry) -> str:
+    if not registry.decider.rules:
+        return "no quarantine rules in the pack"
+    rules = ",".join(rule.id for rule in registry.decider.rules)
+    if registry.enforce:
+        return f"ENFORCING quarantine on {rules} (decided by {registry.judges[0].name})"
+    return f"dry run, would quarantine on {rules}"
+
+
+def _control(args: argparse.Namespace) -> int:
+    try:
+        if args.command == "status":
+            status, body = control.call(args.port, "GET", "/quarantine")
+        else:
+            request = {"target": args.target}
+            if args.command == "quarantine":
+                request["reason"] = args.reason
+            status, body = control.call(args.port, "POST", f"/{args.command}", request)
+    except control.Unreachable:
+        print(f"no watchdog listening on port {args.port}", file=sys.stderr)
+        return 1
+    if status != 200:
+        print(body.get("error", f"HTTP {status}"), file=sys.stderr)
+        return 1
+    if args.command == "status":
+        for entry in body["quarantined"]:
+            print(f"{entry['target']}  {entry['source']}  {entry['at']}  {entry['reason']}")
+        if not body["quarantined"]:
+            print("nothing is quarantined")
+    elif args.command == "quarantine":
+        print(f"quarantined {body['target']}: {body['reason']}")
+    else:
+        print(f"released {body['target']}")
+    return 0
 
 
 async def _replay(

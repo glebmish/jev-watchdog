@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jev_watchdog.cli import DEFAULT_PORT, build_parser, resolve_api_key
+from jev_watchdog.cli import DEFAULT_PORT, build_parser, main, resolve_api_key
 
 
 def test_run_defaults():
@@ -109,3 +109,20 @@ def test_replay_runs_cases_offline_and_reports(tmp_path, capsys, monkeypatch):
 def test_replay_needs_at_least_one_case():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["replay"])
+
+
+def test_enforce_is_off_by_default():
+    assert build_parser().parse_args(["run"]).enforce is False
+    assert build_parser().parse_args(["run", "--enforce"]).enforce is True
+
+
+def test_control_commands_parse():
+    args = build_parser().parse_args(["quarantine", "1d8e7c/main", "--reason", "x", "--port", "9"])
+    assert (args.target, args.reason, args.port) == ("1d8e7c/main", "x", 9)
+    assert build_parser().parse_args(["release", "1d8e7c"]).target == "1d8e7c"
+    assert build_parser().parse_args(["status"]).port == DEFAULT_PORT
+
+
+def test_control_commands_report_a_missing_watchdog(capsys):
+    assert main(["status", "--port", "1"]) == 1
+    assert "no watchdog listening on port 1" in capsys.readouterr().err
