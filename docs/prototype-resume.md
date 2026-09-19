@@ -325,3 +325,25 @@ named parts), to every backend alike. Usage and the result table are in the READ
 - Not built: authentication on `/context` (the watched agent can reach the port and widen
   its own context — same gap as `/release`), per-thread notes, persistence across a restart,
   a note in the quarantine deny message.
+
+## 12. Addendum: GPT through a harness (2026-09-20)
+
+Question: can Claude and GPT be compared with Jev without API keys, on the subscription
+logins, without the agent harness distorting the comparison? Built `--judge codex[:model]`
+(`codex exec`, no instructions, request body on stdin, `--output-schema`, every tool feature
+off, read-only sandbox) next to the existing Agent SDK judge. Table and details: README,
+"Fourth run".
+
+- **Yes for the input, no for the volume.** `gpt-5.5` through `codex exec` sees Jev's request
+  plus ~0.2–0.5k tokens; the newer code-mode models keep ~3.4k of tool preamble; Claude through
+  the Agent SDK ~1.2–1.6k. No agent loop in any of them **[measured per model]**.
+- **The plans are not built for per-event judging.** 444 judgments in 11 minutes emptied the
+  ChatGPT plan's 5-hour Codex window; bursts of ~40 requests a minute were refused at the edge with 403
+  **[once]**. A subscription-backed judge competes with the human's own use of the same plan.
+- **No new information on quality:** GPT answers 0/1 like Claude, misses and false alarms are
+  within 2–3 of each other over 87 expectations, blind spots differ per vendor (GPT: the
+  authorised log upload; Claude: the buried `scp`, the encoded hostname; Jev: `.env.example`)
+  **[one merged run]**.
+- Codex has no "no tools" switch and no turn limit; the judge is disarmed rather than toolless
+  (a live test tells it to write, run and spawn, and checks that nothing happens). The flag
+  list is tied to codex 0.153.

@@ -5,7 +5,8 @@ settings (so no hooks or plugins, and no way to re-trigger the watchdog), no ses
 
 The model gets the same input as Jev: an empty system prompt and the request payload as the
 only message. The output schema stands in for Jev's typed answers. The Agent SDK harness
-still adds ~3.5k tokens of its own (structured-output tool), which cannot be removed.
+still adds tokens of its own (structured-output tool) that cannot be removed: ~1.2-1.6k over
+Jev's count on 2026-09-20 (Claude Code 2.1.278), ~3.5k the day before.
 """
 
 import asyncio
