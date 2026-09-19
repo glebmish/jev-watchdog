@@ -23,9 +23,9 @@ from jev_watchdog.pack import Question
 
 DEFAULT_MODEL = "claude-opus-5"
 TIMEOUT_S = 120.0
-# Structured output is delivered through a tool call, so one judgment is two turns;
-# the extra headroom covers a schema-validation retry.
-MAX_TURNS = 4
+# Exactly one model step. The structured answer is that step's tool call (the SDK reports it
+# as a second turn), so the judge can answer but can never take a follow-up action.
+MAX_TURNS = 1
 
 
 class ClaudeAgentJudge:

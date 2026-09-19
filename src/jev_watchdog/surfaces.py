@@ -2,10 +2,11 @@
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jev_watchdog.judge.base import Judge, JudgeError, JudgeRequest
+from jev_watchdog.judge.base import Judge, JudgeError, JudgeRequest, Verdict
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
 from jev_watchdog.stats import GlobalStats, SurfaceStats
@@ -49,10 +50,11 @@ class Surface:
     # fast one. None is the end-of-session sentinel: print the summary and stop the worker.
     queues: dict[str, asyncio.Queue[Job | None]] = field(default_factory=dict)
     workers: dict[str, asyncio.Task] = field(default_factory=dict)
+    label_override: str | None = None  # replayed cases are named, not truncated ids
 
     @property
     def label(self) -> str:
-        return self.key.label(self.agent_type)
+        return self.label_override or self.key.label(self.agent_type)
 
 
 class SurfaceRegistry:
@@ -73,6 +75,8 @@ class SurfaceRegistry:
         for judge in judges:
             self.stats.judge(judge.name)  # table rows in the order given
         self.surfaces: dict[SurfaceKey, Surface] = {}
+        # Optional observer: on_verdict(surface, judge_name, job, verdict, flagged_ids)
+        self.on_verdict: Callable[[Surface, str, Job, Verdict, set[str]], None] | None = None
 
     def handle(self, payload: dict) -> None:
         """Route one hook payload. Never raises; must run inside the event loop."""
@@ -139,6 +143,7 @@ class SurfaceRegistry:
                 agent_type=payload.get("agent_type"),
                 cwd=payload.get("cwd"),
                 transcript_path=resolve_transcript_path(payload),
+                label_override=payload.get("surface_label"),
             )
             self.surfaces[key] = surface
             self.stats.surfaces += 1
@@ -180,6 +185,8 @@ class SurfaceRegistry:
             flagged = surface.stats.judge(judge.name).record_verdict(self.questions, verdict)
             self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
             self.printer.verdict(surface.label, judge.name, verdict, flagged)
+            if self.on_verdict:
+                self.on_verdict(surface, judge.name, job, verdict, flagged)
 
     def _judge_error(self, surface: Surface, judge: Judge, kind: str, message: str) -> None:
         surface.stats.judge(judge.name).record_error(kind)

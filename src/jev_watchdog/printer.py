@@ -146,7 +146,17 @@ def _event_detail(name: str, payload: dict) -> str:
         return str(payload.get("source", ""))
     if name == "SessionEnd":
         return str(payload.get("reason", ""))
-    return str(payload.get("tool_name", ""))
+    return f"{payload.get('tool_name') or ''} {_tool_preview(payload.get('tool_input'))}".strip()
+
+
+def _tool_preview(tool_input: object) -> str:
+    if not isinstance(tool_input, dict):
+        return ""
+    for key in ("command", "file_path", "pattern", "url", "description"):
+        if tool_input.get(key):
+            text = " ".join(str(tool_input[key]).split())
+            return text if len(text) <= PROMPT_PREVIEW else text[:PROMPT_PREVIEW] + "…"
+    return ""
 
 
 def _value(answer: Answer) -> str:

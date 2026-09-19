@@ -13,8 +13,9 @@ from aiohttp import web
 from rich.console import Console
 
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
-from jev_watchdog.pack import PackError, load_pack
+from jev_watchdog.pack import PackError, Question, load_pack
 from jev_watchdog.printer import Printer
+from jev_watchdog.replay import load_case, run_cases
 from jev_watchdog.server import create_app
 from jev_watchdog.surfaces import SurfaceRegistry
 
@@ -30,7 +31,19 @@ def build_parser() -> argparse.ArgumentParser:
         "run", help="listen for hooks in the foreground and judge every event"
     )
     run.add_argument("--port", type=int, default=DEFAULT_PORT)
-    run.add_argument(
+    _add_judging_options(run)
+
+    replay = commands.add_parser(
+        "replay",
+        help="judge transcript files step by step and check <name>.expect.toml expectations",
+    )
+    replay.add_argument("cases", nargs="+", type=Path, metavar="CASE.jsonl")
+    _add_judging_options(replay)
+    return parser
+
+
+def _add_judging_options(command: argparse.ArgumentParser) -> None:
+    command.add_argument(
         "--judge",
         action=_AppendReplacingDefault,
         default=["jev"],
@@ -39,17 +52,16 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"judge backend, one of {sorted(JUDGES)}, optionally with a model, e.g. "
         "claude:claude-haiku-4-5. Repeat to run several side by side. Default: jev",
     )
-    run.add_argument(
+    command.add_argument(
         "--claude-thinking",
         action="store_true",
         help="leave thinking on for claude judges (default: off, like a non-reasoning judge)",
     )
-    run.add_argument("--pack", type=Path, default=Path("pack.toml"))
-    run.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
-    run.add_argument(
+    command.add_argument("--pack", type=Path, default=Path("pack.toml"))
+    command.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
+    command.add_argument(
         "--log", type=Path, default=None, help="run log path (default runs/<timestamp>.jsonl)"
     )
-    return parser
 
 
 class _AppendReplacingDefault(argparse.Action):
@@ -94,11 +106,31 @@ def main(argv: list[str] | None = None) -> int:
     with log_path.open("a", encoding="utf-8") as log_file:
         printer = Printer(Console(), log_file)
         registry = SurfaceRegistry(judges, questions, printer)
+        if args.command == "replay":
+            return asyncio.run(_replay(args.cases, registry, printer, questions))
+        names = ",".join(judge.name for judge in judges)
         banner = (
-            f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={','.join(judge.name for judge in judges)}"
+            f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={names}"
             f" · {len(questions)} questions · log={log_path} · Ctrl-C to stop"
         )
         return asyncio.run(_serve(registry, printer, args.port, banner))
+
+
+async def _replay(
+    paths: list[Path], registry: SurfaceRegistry, printer: Printer, questions: list[Question]
+) -> int:
+    try:
+        cases = [load_case(path, questions) for path in paths]
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"cannot load case: {exc}") from exc
+    try:
+        await run_cases(cases, registry, printer)
+    finally:
+        await registry.shutdown()
+        for judge in registry.judges:
+            await judge.aclose()
+    printer.global_summary(registry.stats, {})
+    return 0
 
 
 async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner: str) -> int:

@@ -94,6 +94,7 @@ async def test_runs_a_toolless_settingless_one_shot_query():
     assert judge.name == "claude:claude-haiku-4-5"
     assert options.model == "claude-haiku-4-5"
     assert options.tools == [] and options.setting_sources == []
+    assert options.max_turns == 1  # one model step: nothing can follow the answer
     assert options.thinking == {"type": "disabled"}
     assert options.extra_args == {"no-session-persistence": None, "strict-mcp-config": None}
     assert options.output_format == {"type": "json_schema", "schema": answer_schema(QUESTIONS)}

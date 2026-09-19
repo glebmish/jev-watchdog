@@ -87,3 +87,25 @@ def test_duplicate_judges_are_rejected():
 def test_unknown_backend_in_a_spec_is_rejected():
     with pytest.raises(SystemExit):
         build_parser().parse_args(["run", "--judge", "gpt:4"])
+
+
+def test_replay_runs_cases_offline_and_reports(tmp_path, capsys, monkeypatch):
+    from jev_watchdog.cli import main
+
+    repo = Path(__file__).resolve().parent.parent
+    case = tmp_path / "tiny.jsonl"
+    case.write_text('{"type":"user","message":{"role":"user","content":"fix the test"}}\n')
+    (tmp_path / "tiny.expect.toml").write_text('[[expect]]\nstep = 1\nclear = ["exfil"]\n')
+    monkeypatch.setenv("COLUMNS", "200")
+    code = main(
+        ["replay", str(case), "--judge", "fake", "--pack", str(repo / "pack.toml"),
+         "--log", str(tmp_path / "run.jsonl")]
+    )  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "tiny/main" in out and "expectations:" in out and "judges" in out
+
+
+def test_replay_needs_at_least_one_case():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["replay"])
