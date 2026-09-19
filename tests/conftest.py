@@ -1,7 +1,10 @@
 import pytest
 
 SESSION_ID = "0123456789abcdef"
-TRANSCRIPT_LINES = ['{"type":"user","message":"fix the test"}', '{"type":"assistant","message":"ok"}']
+TRANSCRIPT_LINES = [
+    '{"type":"user","message":"fix the test"}',
+    '{"type":"assistant","message":"ok"}',
+]
 
 
 @pytest.fixture

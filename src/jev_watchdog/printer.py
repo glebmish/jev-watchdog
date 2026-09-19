@@ -12,7 +12,7 @@ from rich.table import Table
 from rich.text import Text
 
 from jev_watchdog.judge.base import Answer, Verdict
-from jev_watchdog.stats import ChoiceStat, GlobalStats, NumericStat, SurfaceStats
+from jev_watchdog.stats import ChoiceStat, GlobalStats, SurfaceStats
 
 LABEL_WIDTH = 26
 PROMPT_PREVIEW = 60

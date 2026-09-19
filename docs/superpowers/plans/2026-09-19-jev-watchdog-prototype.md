@@ -541,7 +541,9 @@ QUESTIONS = [
 
 
 def request(lines: int = 2) -> JudgeRequest:
-    return JudgeRequest(SurfaceKey("s", "main"), {"hook_event_name": "Stop"}, ["{}"] * lines, QUESTIONS)
+    return JudgeRequest(
+        SurfaceKey("s", "main"), {"hook_event_name": "Stop"}, ["{}"] * lines, QUESTIONS
+    )
 
 
 async def test_answers_every_question_with_the_right_shape():
@@ -745,7 +747,9 @@ def test_surface_stats_records_verdict_and_returns_flagged():
     questions = [
         Question("exfil", "noul", "i", flag_threshold=0.7),
         Question("serves_goal", "noul", "i", flag_below=0.3),
-        Question("activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)),
+        Question(
+            "activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)
+        ),
         Question("unanswered", "noul", "i"),
     ]
     verdict = Verdict(
@@ -821,7 +825,9 @@ class NumericStat:
         self.mean += (value - self.mean) / self.n
         self.min = value if self.min is None else min(self.min, value)
         self.max = value if self.max is None else max(self.max, value)
-        self.ewma = value if self.ewma is None else EWMA_ALPHA * value + (1 - EWMA_ALPHA) * self.ewma
+        self.ewma = (
+            value if self.ewma is None else EWMA_ALPHA * value + (1 - EWMA_ALPHA) * self.ewma
+        )
         _bump_streak(self, flagged)
 
 
@@ -976,7 +982,9 @@ def test_event_line_and_log_record():
 
 def test_event_detail_per_event_type():
     printer, out, _ = make_printer()
-    printer.event("x", {"hook_event_name": "UserPromptSubmit", "prompt": "fix the [failing] test " * 10})
+    printer.event(
+        "x", {"hook_event_name": "UserPromptSubmit", "prompt": "fix the [failing] test " * 10}
+    )
     printer.event("x", {"hook_event_name": "SubagentStart", "agent_type": "Explore"})
     printer.event("x", {"hook_event_name": "SessionEnd", "reason": "clear"})
     text = out.getvalue()
@@ -987,7 +995,11 @@ def test_event_detail_per_event_type():
 def test_verdict_line_marks_flagged_answers():
     printer, out, log = make_printer()
     verdict = Verdict(
-        {"exfil": Answer(0.95), "goal_drift": Answer(2.88, 0.9), "activity": Answer("off_task", 0.7)},
+        {
+            "exfil": Answer(0.95),
+            "goal_drift": Answer(2.88, 0.9),
+            "activity": Answer("off_task", 0.7),
+        },
         latency_ms=612.4,
         input_tokens=4100,
         judge="jev-1.13.0",
@@ -1019,11 +1031,15 @@ def test_summaries_render():
     printer, out, _ = make_printer()
     questions = [
         Question("exfil", "noul", "i", flag_threshold=0.7),
-        Question("activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)),
+        Question(
+            "activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)
+        ),
     ]
     surface = SurfaceStats()
     surface.record_event("PostToolUse")
-    surface.record_verdict(questions, Verdict({"exfil": Answer(0.9), "activity": Answer("stuck")}, 100, 10, "fake"))
+    surface.record_verdict(
+        questions, Verdict({"exfil": Answer(0.9), "activity": Answer("stuck")}, 100, 10, "fake")
+    )
     surface.record_error("timeout")
     stats = GlobalStats(surfaces=1)
     stats.record_event("PostToolUse")
@@ -1227,7 +1243,10 @@ git commit -m "Add console printer and JSONL run log"
 import pytest
 
 SESSION_ID = "0123456789abcdef"
-TRANSCRIPT_LINES = ['{"type":"user","message":"fix the test"}', '{"type":"assistant","message":"ok"}']
+TRANSCRIPT_LINES = [
+    '{"type":"user","message":"fix the test"}',
+    '{"type":"assistant","message":"ok"}',
+]
 
 
 @pytest.fixture
@@ -1301,9 +1320,14 @@ async def test_one_surface_per_agent_thread(make_payload, subagent_transcript, o
     registry.handle(make_payload(agent_id="abc123", agent_type="Explore"))
     registry.handle(make_payload())
     await registry.drain()
-    assert set(registry.surfaces) == {SurfaceKey(SESSION_ID, MAIN), SurfaceKey(SESSION_ID, "abc123")}
+    assert set(registry.surfaces) == {
+        SurfaceKey(SESSION_ID, MAIN),
+        SurfaceKey(SESSION_ID, "abc123"),
+    }
     assert registry.stats.surfaces == 2
-    assert registry.surfaces[SurfaceKey(SESSION_ID, "abc123")].transcript_path == subagent_transcript
+    assert (
+        registry.surfaces[SurfaceKey(SESSION_ID, "abc123")].transcript_path == subagent_transcript
+    )
     await registry.shutdown()
 
 
@@ -1482,7 +1506,14 @@ from jev_watchdog.transcript import SurfaceKey, read_lines, resolve_transcript_p
 
 LIFECYCLE_EVENTS = frozenset({"SessionStart", "SubagentStart", "SessionEnd"})
 JUDGING_EVENTS = frozenset(
-    {"UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "PermissionDenied", "Stop", "SubagentStop"}
+    {
+        "UserPromptSubmit",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PermissionDenied",
+        "Stop",
+        "SubagentStop",
+    }
 )
 ALL_EVENTS = LIFECYCLE_EVENTS | JUDGING_EVENTS
 
@@ -1759,7 +1790,9 @@ from jev_watchdog.transcript import SurfaceKey
 QUESTIONS = [
     Question("exfil", "noul", "sends data out"),
     Question("drift", "score", "distance", criteria=["on task", "off task"]),
-    Question("activity", "choice", "doing what", criteria={"exploring": "reading", "stuck": "looping"}),
+    Question(
+        "activity", "choice", "doing what", criteria={"exploring": "reading", "stuck": "looping"}
+    ),
 ]
 LINES = ['{"type":"user"}', '{"type":"assistant"}']
 RAW = {
@@ -1810,7 +1843,10 @@ async def test_sends_raw_lines_and_maps_questions():
     assert isinstance(call["questions"]["drift"], ts.Score)
     assert list(call["questions"]["drift"].criteria) == ["on task", "off task"]
     assert isinstance(call["questions"]["activity"], ts.Choice)
-    assert dict(call["questions"]["activity"].criteria) == {"exploring": "reading", "stuck": "looping"}
+    assert dict(call["questions"]["activity"].criteria) == {
+        "exploring": "reading",
+        "stuck": "looping",
+    }
 
 
 async def test_maps_response_to_verdict():
@@ -1831,7 +1867,10 @@ def status_error(cls, status: int, text: str):
 @pytest.mark.parametrize(
     "error, kind",
     [
-        (status_error(ts.TypeSafeBadRequestError, 400, '{"error_type":"max_tokens_exceeded"}'), "over_limit"),
+        (
+            status_error(ts.TypeSafeBadRequestError, 400, '{"error_type":"max_tokens_exceeded"}'),
+            "over_limit",
+        ),
         (status_error(ts.TypeSafeBadRequestError, 400, "something else"), "other"),
         (status_error(ts.TypeSafeRateLimitError, 429, "slow down"), "rate_limited"),
         (status_error(ts.TypeSafeAuthenticationError, 401, "bad key"), "auth"),
@@ -1888,13 +1927,17 @@ class JevJudge:
         timeout_s: float = 30.0,
         client: ts.AsyncTypeSafeClient | None = None,
     ) -> None:
-        self._client = client or ts.AsyncTypeSafeClient(api_key=api_key, model=model, timeout=timeout_s)
+        self._client = client or ts.AsyncTypeSafeClient(
+            api_key=api_key, model=model, timeout=timeout_s
+        )
 
     async def judge(self, req: JudgeRequest) -> Verdict:
         questions = {q.id: _to_sdk(q) for q in req.questions}
         started = time.perf_counter()
         try:
-            response = await self._client.system_one(state=req.transcript_lines, questions=questions)
+            response = await self._client.system_one(
+                state=req.transcript_lines, questions=questions
+            )
         except ts.TypeSafeError as exc:
             raise JudgeError(_error_kind(exc), str(exc)) from exc
         latency_ms = (time.perf_counter() - started) * 1000
@@ -2009,7 +2052,9 @@ LINES = [
 
 @pytest.fixture
 def api_key() -> str:
-    key = os.environ.get("TYPESAFE_API_KEY") or (KEY_FILE.read_text().strip() if KEY_FILE.exists() else "")
+    key = os.environ.get("TYPESAFE_API_KEY") or (
+        KEY_FILE.read_text().strip() if KEY_FILE.exists() else ""
+    )
     if not key:
         pytest.skip("no Jev API key available")
     return key
@@ -2093,7 +2138,12 @@ def test_run_overrides():
     args = build_parser().parse_args(
         ["run", "--port", "9000", "--judge", "fake", "--pack", "p.toml", "--log", "out.jsonl"]
     )
-    assert (args.port, args.judge, args.pack, args.log) == (9000, "fake", Path("p.toml"), Path("out.jsonl"))
+    assert (args.port, args.judge, args.pack, args.log) == (
+        9000,
+        "fake",
+        Path("p.toml"),
+        Path("out.jsonl"),
+    )
 
 
 def test_unknown_judge_is_rejected():
@@ -2198,12 +2248,16 @@ HOST = "127.0.0.1"
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jev-watchdog", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser("run", help="listen for hooks in the foreground and judge every event")
+    run = commands.add_parser(
+        "run", help="listen for hooks in the foreground and judge every event"
+    )
     run.add_argument("--port", type=int, default=DEFAULT_PORT)
     run.add_argument("--judge", choices=sorted(JUDGES), default="jev")
     run.add_argument("--pack", type=Path, default=Path("pack.toml"))
     run.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
-    run.add_argument("--log", type=Path, default=None, help="run log path (default runs/<timestamp>.jsonl)")
+    run.add_argument(
+        "--log", type=Path, default=None, help="run log path (default runs/<timestamp>.jsonl)"
+    )
     return parser
 
 

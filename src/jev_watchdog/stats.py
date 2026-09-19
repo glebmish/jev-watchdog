@@ -28,7 +28,9 @@ class NumericStat:
         self.mean += (value - self.mean) / self.n
         self.min = value if self.min is None else min(self.min, value)
         self.max = value if self.max is None else max(self.max, value)
-        self.ewma = value if self.ewma is None else EWMA_ALPHA * value + (1 - EWMA_ALPHA) * self.ewma
+        self.ewma = (
+            value if self.ewma is None else EWMA_ALPHA * value + (1 - EWMA_ALPHA) * self.ewma
+        )
         _bump_streak(self, flagged)
 
 

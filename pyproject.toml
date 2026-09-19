@@ -36,3 +36,7 @@ markers = ["live: calls the real Jev API (needs a key); run with -m live"]
 
 [tool.ruff]
 line-length = 100
+
+[tool.ruff.lint]
+# Console timestamps and run-log names are deliberately local wall-clock time.
+ignore = ["DTZ"]

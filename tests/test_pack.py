@@ -55,8 +55,10 @@ def test_flags():
             "flag_threshold",
         ),
         (
-            '[questions.q]\nkind = "choice"\ninstructions = "x"\nflag_choices = ["z"]\n'
-            '[questions.q.criteria]\na = "A"\nb = "B"',
+            (
+                '[questions.q]\nkind = "choice"\ninstructions = "x"\nflag_choices = ["z"]\n'
+                '[questions.q.criteria]\na = "A"\nb = "B"'
+            ),
             "flag_choices",
         ),
     ],

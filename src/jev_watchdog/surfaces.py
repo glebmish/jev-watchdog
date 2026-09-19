@@ -12,7 +12,14 @@ from jev_watchdog.transcript import SurfaceKey, read_lines, resolve_transcript_p
 
 LIFECYCLE_EVENTS = frozenset({"SessionStart", "SubagentStart", "SessionEnd"})
 JUDGING_EVENTS = frozenset(
-    {"UserPromptSubmit", "PostToolUse", "PostToolUseFailure", "PermissionDenied", "Stop", "SubagentStop"}
+    {
+        "UserPromptSubmit",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PermissionDenied",
+        "Stop",
+        "SubagentStop",
+    }
 )
 ALL_EVENTS = LIFECYCLE_EVENTS | JUDGING_EVENTS
 
@@ -131,7 +138,7 @@ class SurfaceRegistry:
             verdict = await self.judge.judge(request)
         except JudgeError as exc:
             self._error(surface, exc.kind, exc.message)
-        except Exception as exc:  # a judge bug must not kill the surface's worker
+        except Exception as exc:  # noqa: BLE001 - a judge bug must not kill the surface's worker
             self._error(surface, "other", repr(exc))
         else:
             flagged = surface.stats.record_verdict(self.questions, verdict)

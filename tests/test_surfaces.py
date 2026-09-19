@@ -2,6 +2,7 @@ import asyncio
 import io
 
 import pytest
+from conftest import SESSION_ID, TRANSCRIPT_LINES
 from rich.console import Console
 
 from jev_watchdog.judge.base import JudgeRequest, Verdict
@@ -10,8 +11,6 @@ from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
 from jev_watchdog.surfaces import ALL_EVENTS, JUDGING_EVENTS, LIFECYCLE_EVENTS, SurfaceRegistry
 from jev_watchdog.transcript import MAIN, SurfaceKey
-
-from conftest import SESSION_ID, TRANSCRIPT_LINES
 
 QUESTIONS = [Question("exfil", "noul", "i", flag_threshold=0.7)]
 
@@ -37,9 +36,14 @@ async def test_one_surface_per_agent_thread(make_payload, subagent_transcript, o
     registry.handle(make_payload(agent_id="abc123", agent_type="Explore"))
     registry.handle(make_payload())
     await registry.drain()
-    assert set(registry.surfaces) == {SurfaceKey(SESSION_ID, MAIN), SurfaceKey(SESSION_ID, "abc123")}
+    assert set(registry.surfaces) == {
+        SurfaceKey(SESSION_ID, MAIN),
+        SurfaceKey(SESSION_ID, "abc123"),
+    }
     assert registry.stats.surfaces == 2
-    assert registry.surfaces[SurfaceKey(SESSION_ID, "abc123")].transcript_path == subagent_transcript
+    assert (
+        registry.surfaces[SurfaceKey(SESSION_ID, "abc123")].transcript_path == subagent_transcript
+    )
     await registry.shutdown()
 
 

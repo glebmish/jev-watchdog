@@ -35,7 +35,9 @@ def test_event_line_and_log_record():
 
 def test_event_detail_per_event_type():
     printer, out, _ = make_printer()
-    printer.event("x", {"hook_event_name": "UserPromptSubmit", "prompt": "fix the [failing] test " * 10})
+    printer.event(
+        "x", {"hook_event_name": "UserPromptSubmit", "prompt": "fix the [failing] test " * 10}
+    )
     printer.event("x", {"hook_event_name": "SubagentStart", "agent_type": "Explore"})
     printer.event("x", {"hook_event_name": "SessionEnd", "reason": "clear"})
     text = out.getvalue()
@@ -46,7 +48,11 @@ def test_event_detail_per_event_type():
 def test_verdict_line_marks_flagged_answers():
     printer, out, log = make_printer()
     verdict = Verdict(
-        {"exfil": Answer(0.95), "goal_drift": Answer(2.88, 0.9), "activity": Answer("off_task", 0.7)},
+        {
+            "exfil": Answer(0.95),
+            "goal_drift": Answer(2.88, 0.9),
+            "activity": Answer("off_task", 0.7),
+        },
         latency_ms=612.4,
         input_tokens=4100,
         judge="jev-1.13.0",
@@ -78,11 +84,15 @@ def test_summaries_render():
     printer, out, _ = make_printer()
     questions = [
         Question("exfil", "noul", "i", flag_threshold=0.7),
-        Question("activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)),
+        Question(
+            "activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)
+        ),
     ]
     surface = SurfaceStats()
     surface.record_event("PostToolUse")
-    surface.record_verdict(questions, Verdict({"exfil": Answer(0.9), "activity": Answer("stuck")}, 100, 10, "fake"))
+    surface.record_verdict(
+        questions, Verdict({"exfil": Answer(0.9), "activity": Answer("stuck")}, 100, 10, "fake")
+    )
     surface.record_error("timeout")
     stats = GlobalStats(surfaces=1)
     stats.record_event("PostToolUse")

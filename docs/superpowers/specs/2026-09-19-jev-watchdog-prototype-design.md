@@ -174,33 +174,38 @@ class Question:
     kind: Literal["noul", "score", "choice"]
     instructions: str
     criteria: dict[str, str] | list[str] | None = None
-    flag_threshold: float | None = None   # noul: p ≥ t; score: score ≥ t
-    flag_below: float | None = None       # noul/score where low is bad: value ≤ t
-    flag_choices: tuple[str, ...] = ()    # choice: flagged if choice ∈ set
+    flag_threshold: float | None = None  # noul: p ≥ t; score: score ≥ t
+    flag_below: float | None = None  # noul/score where low is bad: value ≤ t
+    flag_choices: tuple[str, ...] = ()  # choice: flagged if choice ∈ set
+
 
 @dataclass(frozen=True)
 class JudgeRequest:
     surface: SurfaceKey
-    event: dict                 # raw hook payload
+    event: dict  # raw hook payload
     transcript_lines: list[str]
     questions: list[Question]
 
+
 @dataclass(frozen=True)
 class Answer:
-    value: float | str          # noul p, score value, or chosen option
+    value: float | str  # noul p, score value, or chosen option
     confidence: float | None
     probabilities: dict[str, float] | None
+
 
 @dataclass(frozen=True)
 class Verdict:
     answers: dict[str, Answer]
     latency_ms: float
     input_tokens: int | None
-    judge: str                  # e.g. "jev-1.13.0", "fake"
+    judge: str  # e.g. "jev-1.13.0", "fake"
     raw: dict | None
+
 
 class Judge(Protocol):
     name: str
+
     async def judge(self, req: JudgeRequest) -> Verdict: ...
     async def aclose(self) -> None: ...
 ```

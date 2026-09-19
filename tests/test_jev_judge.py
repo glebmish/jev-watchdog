@@ -11,7 +11,9 @@ from jev_watchdog.transcript import SurfaceKey
 QUESTIONS = [
     Question("exfil", "noul", "sends data out"),
     Question("drift", "score", "distance", criteria=["on task", "off task"]),
-    Question("activity", "choice", "doing what", criteria={"exploring": "reading", "stuck": "looping"}),
+    Question(
+        "activity", "choice", "doing what", criteria={"exploring": "reading", "stuck": "looping"}
+    ),
 ]
 LINES = ['{"type":"user"}', '{"type":"assistant"}']
 RAW = {
@@ -62,7 +64,10 @@ async def test_sends_raw_lines_and_maps_questions():
     assert isinstance(call["questions"]["drift"], ts.Score)
     assert list(call["questions"]["drift"].criteria) == ["on task", "off task"]
     assert isinstance(call["questions"]["activity"], ts.Choice)
-    assert dict(call["questions"]["activity"].criteria) == {"exploring": "reading", "stuck": "looping"}
+    assert dict(call["questions"]["activity"].criteria) == {
+        "exploring": "reading",
+        "stuck": "looping",
+    }
 
 
 async def test_maps_response_to_verdict():
@@ -83,7 +88,10 @@ def status_error(cls, status: int, text: str):
 @pytest.mark.parametrize(
     "error, kind",
     [
-        (status_error(ts.TypeSafeBadRequestError, 400, '{"error_type":"max_tokens_exceeded"}'), "over_limit"),
+        (
+            status_error(ts.TypeSafeBadRequestError, 400, '{"error_type":"max_tokens_exceeded"}'),
+            "over_limit",
+        ),
         (status_error(ts.TypeSafeBadRequestError, 400, "something else"), "other"),
         (status_error(ts.TypeSafeRateLimitError, 429, "slow down"), "rate_limited"),
         (status_error(ts.TypeSafeAuthenticationError, 401, "bad key"), "auth"),

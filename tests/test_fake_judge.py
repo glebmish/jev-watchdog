@@ -13,7 +13,9 @@ QUESTIONS = [
 
 
 def request(lines: int = 2) -> JudgeRequest:
-    return JudgeRequest(SurfaceKey("s", "main"), {"hook_event_name": "Stop"}, ["{}"] * lines, QUESTIONS)
+    return JudgeRequest(
+        SurfaceKey("s", "main"), {"hook_event_name": "Stop"}, ["{}"] * lines, QUESTIONS
+    )
 
 
 async def test_answers_every_question_with_the_right_shape():

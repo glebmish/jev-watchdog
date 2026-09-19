@@ -18,13 +18,17 @@ class JevJudge:
         timeout_s: float = 30.0,
         client: ts.AsyncTypeSafeClient | None = None,
     ) -> None:
-        self._client = client or ts.AsyncTypeSafeClient(api_key=api_key, model=model, timeout=timeout_s)
+        self._client = client or ts.AsyncTypeSafeClient(
+            api_key=api_key, model=model, timeout=timeout_s
+        )
 
     async def judge(self, req: JudgeRequest) -> Verdict:
         questions = {q.id: _to_sdk(q) for q in req.questions}
         started = time.perf_counter()
         try:
-            response = await self._client.system_one(state=req.transcript_lines, questions=questions)
+            response = await self._client.system_one(
+                state=req.transcript_lines, questions=questions
+            )
         except ts.TypeSafeError as exc:
             raise JudgeError(_error_kind(exc), str(exc)) from exc
         latency_ms = (time.perf_counter() - started) * 1000

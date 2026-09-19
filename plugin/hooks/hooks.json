@@ -1,0 +1,40 @@
+{
+  "description": "Forward hook events to jev-watchdog on 127.0.0.1:8787 (observe-only).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -o /dev/null -m 2 -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/hooks || true",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "PostToolUse": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "PostToolUseFailure": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "PermissionDenied": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "SubagentStart": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "http", "url": "http://127.0.0.1:8787/hooks", "timeout": 2 }] }
+    ]
+  }
+}

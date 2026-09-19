@@ -1,0 +1,5 @@
+{
+  "name": "jev-watchdog-hooks",
+  "version": "0.1.0",
+  "description": "Forwards Claude Code hook events to a local jev-watchdog listener. Observe-only: never blocks or alters the session."
+}

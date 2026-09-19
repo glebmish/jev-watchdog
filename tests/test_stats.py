@@ -35,7 +35,9 @@ def test_surface_stats_records_verdict_and_returns_flagged():
     questions = [
         Question("exfil", "noul", "i", flag_threshold=0.7),
         Question("serves_goal", "noul", "i", flag_below=0.3),
-        Question("activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)),
+        Question(
+            "activity", "choice", "i", criteria={"ok": "", "stuck": ""}, flag_choices=("stuck",)
+        ),
         Question("unanswered", "noul", "i"),
     ]
     verdict = Verdict(
