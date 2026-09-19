@@ -17,11 +17,11 @@ from rich.console import Console
 
 from jev_watchdog import control
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
-from jev_watchdog.pack import PackError, Question, load_pack
+from jev_watchdog.pack import PackError, Question, load_packs
 from jev_watchdog.printer import Printer
 from jev_watchdog.replay import load_case, run_cases
 from jev_watchdog.server import create_app
-from jev_watchdog.surfaces import SurfaceRegistry
+from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
 
 DEFAULT_PORT = 8787
 DEFAULT_KEY_FILE = Path("prototype-throwaway-key")
@@ -40,6 +40,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="quarantine a thread when a pack rule trips and reject its tool calls; "
         "without it, only report what would be quarantined",
+    )
+    run.add_argument(
+        "--transcript-wait",
+        type=float,
+        default=TRANSCRIPT_WAIT_S,
+        metavar="SECONDS",
+        help="how long a tool event may wait, in the background, for its tool call to reach "
+        f"the transcript before it is judged anyway; 0 = never wait. Default: {TRANSCRIPT_WAIT_S}",
     )
     _add_judging_options(run)
 
@@ -71,14 +79,22 @@ def _add_judging_options(command: argparse.ArgumentParser) -> None:
         type=_judge_spec,
         metavar="NAME[:MODEL]",
         help=f"judge backend, one of {sorted(JUDGES)}, optionally with a model, e.g. "
-        "claude:claude-haiku-4-5. Repeat to run several side by side. Default: jev",
+        "claude:claude-haiku-4-5. Repeat to run several side by side. fake:WORD is calm until "
+        "a judged tool call contains WORD, then trips every quarantine rule. Default: jev",
     )
     command.add_argument(
         "--claude-thinking",
         action="store_true",
         help="leave thinking on for claude judges (default: off, like a non-reasoning judge)",
     )
-    command.add_argument("--pack", type=Path, default=Path("pack.toml"))
+    command.add_argument(
+        "--pack",
+        action=_AppendReplacingDefault,
+        default=[Path("pack.toml")],
+        type=Path,
+        help="question pack; repeat to merge several, e.g. --pack pack.toml --pack "
+        "packs/canary.toml adds an easy-to-trip rule for end-to-end tests. Default: pack.toml",
+    )
     command.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     command.add_argument(
         "--log", type=Path, default=None, help="run log path (default runs/<timestamp>.jsonl)"
@@ -113,9 +129,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("status", "quarantine", "release"):
         return _control(args)
     try:
-        questions = load_pack(args.pack)
+        questions = load_packs(args.pack)
     except (OSError, PackError) as exc:
-        raise SystemExit(f"cannot load pack {args.pack}: {exc}") from exc
+        raise SystemExit(f"cannot load pack: {exc}") from exc
     if len(set(args.judge)) != len(args.judge):
         raise SystemExit(f"--judge given more than once with the same value: {args.judge}")
     needs_key = any(backend_of(spec) == "jev" for spec in args.judge)
@@ -129,7 +145,10 @@ def main(argv: list[str] | None = None) -> int:
     with log_path.open("a", encoding="utf-8") as log_file:
         printer = Printer(Console(), log_file)
         enforce = args.command == "run" and args.enforce
-        registry = SurfaceRegistry(judges, questions, printer, enforce=enforce)
+        wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
+        registry = SurfaceRegistry(
+            judges, questions, printer, enforce=enforce, transcript_wait_s=wait_s
+        )
         if args.command == "replay":
             return asyncio.run(_replay(args.cases, registry, printer, questions))
         names = ",".join(judge.name for judge in judges)

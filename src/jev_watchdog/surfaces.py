@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from jev_watchdog.decide import Decider, Trip
+from jev_watchdog.decide import TOOL_EVENTS, Decider, Trip
 from jev_watchdog.judge.base import Judge, JudgeError, JudgeRequest, Verdict
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
@@ -21,6 +21,7 @@ from jev_watchdog.transcript import (
     MAIN,
     SurfaceKey,
     conversation_lines,
+    has_tool_result,
     read_lines,
     resolve_transcript_path,
     surface_key,
@@ -40,6 +41,12 @@ JUDGING_EVENTS = frozenset(
 GATE_EVENTS = frozenset({"PreToolUse"})  # answered from the quarantine book, never judged
 ALL_EVENTS = LIFECYCLE_EVENTS | JUDGING_EVENTS | GATE_EVENTS
 
+# Claude Code writes the transcript asynchronously: a PostToolUse hook usually arrives before
+# its tool call is in the file, and by the next hook a newer call is already "the most recent
+# action". So a tool event is judged only once its result has reached the transcript.
+TRANSCRIPT_WAIT_S = 2.0
+TRANSCRIPT_POLL_S = 0.05
+
 
 class TargetError(Exception):
     """A quarantine/release target that cannot be acted on; status is the HTTP answer."""
@@ -57,6 +64,16 @@ class Job:
     received_at: float  # time.monotonic() when the hook arrived
 
 
+@dataclass(frozen=True)
+class _Pending:
+    """An event that cannot be dispatched yet: its transcript is behind, or an earlier event
+    of its thread is still waiting and must stay ahead of it."""
+
+    payload: dict | None  # None is the end-of-session sentinel
+    received_at: float
+    lines: list[str] | None  # the snapshot taken at receipt, when it was already complete
+
+
 @dataclass
 class Surface:
     key: SurfaceKey
@@ -68,6 +85,10 @@ class Surface:
     # fast one. None is the end-of-session sentinel: print the summary and stop the worker.
     queues: dict[str, asyncio.Queue[Job | None]] = field(default_factory=dict)
     workers: dict[str, asyncio.Task] = field(default_factory=dict)
+    # Events waiting for the transcript, dispatched in arrival order by one task.
+    intake: asyncio.Queue[_Pending] = field(default_factory=asyncio.Queue)
+    intake_worker: asyncio.Task | None = None
+    backlog: int = 0
     label_override: str | None = None  # replayed cases are named, not truncated ids
 
     @property
@@ -83,6 +104,7 @@ class SurfaceRegistry:
         printer: Printer,
         stats: GlobalStats | None = None,
         enforce: bool = False,
+        transcript_wait_s: float = TRANSCRIPT_WAIT_S,
     ) -> None:
         names = [judge.name for judge in judges]
         if len(set(names)) != len(names):
@@ -97,6 +119,7 @@ class SurfaceRegistry:
         # Every judge's verdicts are folded, so a dry run and side-by-side judges report what
         # they would do. Only the first judge's trips quarantine, and only when enforcing.
         self.enforce = enforce
+        self.transcript_wait_s = transcript_wait_s
         self.decider = Decider(questions)
         self.quarantines = Quarantines()
         # Optional observer: on_verdict(surface, judge_name, job, verdict, flagged_ids, tripped)
@@ -127,23 +150,14 @@ class SurfaceRegistry:
         if event == "SessionEnd":
             for other in self.surfaces.values():
                 if other.key.session_id == surface.key.session_id:
-                    self._enqueue(other, None)
+                    self._admit(other, _Pending(None, received_at, None))
         elif event in JUDGING_EVENTS:
-            try:
-                lines = conversation_lines(read_lines(surface.transcript_path))
-            except FileNotFoundError:
-                lines = []  # session start: the hook fires before the transcript exists
-            except OSError as exc:
-                surface.stats.record_error("transcript")
-                self.stats.record_error("transcript")
-                self.printer.error(surface.label, "transcript", str(exc))
-                return None
-            if lines:
-                self._enqueue(surface, Job(payload, lines, received_at))
-            else:
-                self.printer.note(
-                    surface.label, "no conversation in transcript yet, registered only"
+            lines = self._snapshot(surface)
+            if lines is not None:
+                behind = self._awaited(payload) and not has_tool_result(
+                    lines, payload["tool_use_id"]
                 )
+                self._admit(surface, _Pending(payload, received_at, None if behind else lines))
         return None
 
     def quarantine(self, target: str, reason: str) -> Quarantine:
@@ -171,6 +185,7 @@ class SurfaceRegistry:
         return {surface.label: surface.stats for surface in self.surfaces.values()}
 
     async def drain(self) -> None:
+        await asyncio.gather(*(surface.intake.join() for surface in self.surfaces.values()))
         queues = [q for surface in self.surfaces.values() for q in surface.queues.values()]
         await asyncio.gather(*(queue.join() for queue in queues))
 
@@ -178,12 +193,79 @@ class SurfaceRegistry:
         workers = [
             worker
             for surface in self.surfaces.values()
-            for worker in surface.workers.values()
-            if not worker.done()
+            for worker in (*surface.workers.values(), surface.intake_worker)
+            if worker is not None and not worker.done()
         ]
         for worker in workers:
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
+
+    def _snapshot(self, surface: Surface) -> list[str] | None:
+        """The thread's conversation right now; None (and reported) if it cannot be read."""
+        try:
+            return conversation_lines(read_lines(surface.transcript_path))
+        except FileNotFoundError:
+            return []  # session start: the hook fires before the transcript exists
+        except OSError as exc:
+            surface.stats.record_error("transcript")
+            self.stats.record_error("transcript")
+            self.printer.error(surface.label, "transcript", str(exc))
+            return None
+
+    def _awaited(self, payload: dict) -> bool:
+        tool_use_id = payload.get("tool_use_id")
+        return (
+            self.transcript_wait_s > 0
+            and payload.get("hook_event_name") in TOOL_EVENTS
+            and isinstance(tool_use_id, str)
+            and bool(tool_use_id)
+        )
+
+    def _admit(self, surface: Surface, pending: _Pending) -> None:
+        ready = pending.payload is None or pending.lines is not None
+        if ready and surface.backlog == 0:
+            self._dispatch(surface, pending, pending.lines)
+            return
+        surface.backlog += 1
+        surface.intake.put_nowait(pending)
+        if surface.intake_worker is None or surface.intake_worker.done():
+            surface.intake_worker = asyncio.create_task(
+                self._take_in(surface), name=f"intake:{surface.label}"
+            )
+
+    async def _take_in(self, surface: Surface) -> None:
+        while True:
+            pending = await surface.intake.get()
+            try:
+                lines = pending.lines
+                if pending.payload is not None and lines is None:
+                    lines = await self._caught_up(surface, pending.payload["tool_use_id"])
+                self._dispatch(surface, pending, lines)
+            finally:
+                surface.backlog -= 1
+                surface.intake.task_done()
+
+    async def _caught_up(self, surface: Surface, tool_use_id: str) -> list[str] | None:
+        deadline = time.monotonic() + self.transcript_wait_s
+        while True:
+            lines = self._snapshot(surface)
+            if lines is None or has_tool_result(lines, tool_use_id):
+                return lines
+            if time.monotonic() >= deadline:
+                waited = f"{self.transcript_wait_s * 1000:.0f}ms"
+                self.printer.note(
+                    surface.label, f"transcript still behind after {waited}, judging it as it is"
+                )
+                return lines
+            await asyncio.sleep(TRANSCRIPT_POLL_S)
+
+    def _dispatch(self, surface: Surface, pending: _Pending, lines: list[str] | None) -> None:
+        if pending.payload is None:
+            self._enqueue(surface, None)
+        elif lines:
+            self._enqueue(surface, Job(pending.payload, lines, pending.received_at))
+        elif lines is not None:
+            self.printer.note(surface.label, "no conversation in transcript yet, registered only")
 
     def _gate(self, surface: Surface, payload: dict) -> dict | None:
         blocking = self.quarantines.blocking(surface.key)

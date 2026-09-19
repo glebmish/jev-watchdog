@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from jev_watchdog.pack import PackError, Question, load_pack
+from jev_watchdog.pack import PackError, Question, load_pack, load_packs
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -117,3 +117,20 @@ def test_quarantine_rule_values_must_be_numbers(tmp_path, extra):
     path.write_text(f'[questions.q]\nkind = "noul"\ninstructions = "i"\n{extra}')
     with pytest.raises(PackError, match="numbers"):
         load_pack(path)
+
+
+def test_packs_are_merged_in_order(tmp_path):
+    first = tmp_path / "a.toml"
+    first.write_text('[questions.one]\nkind = "noul"\ninstructions = "i"\n')
+    second = tmp_path / "b.toml"
+    second.write_text('[questions.two]\nkind = "noul"\ninstructions = "i"\n')
+    assert [question.id for question in load_packs([first, second])] == ["one", "two"]
+    with pytest.raises(PackError, match="one.*defined in both"):
+        load_packs([first, first])
+
+
+def test_the_canary_pack_adds_a_trippable_rule_to_the_default_pack():
+    questions = load_packs([REPO / "pack.toml", REPO / "packs" / "canary.toml"])
+    canary = questions[-1]
+    assert canary.id == "canary" and canary.quarantine_limit is not None
+    assert "canary" in canary.instructions

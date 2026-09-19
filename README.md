@@ -35,8 +35,8 @@ If the watchdog is not running the hooks fail silently and Claude Code is unaffe
 is also appended to `runs/<timestamp>.jsonl`.
 
 Options: `--port` (default 8787; the plugin's URLs are fixed to 8787), `--enforce`,
-`--judge NAME[:MODEL]` (repeatable), `--claude-thinking`, `--pack pack.toml`, `--key-file`,
-`--log`.
+`--judge NAME[:MODEL]` (repeatable), `--claude-thinking`, `--pack FILE` (repeatable, the packs
+are merged; default `pack.toml`), `--transcript-wait SECONDS` (default 2), `--key-file`, `--log`.
 
 ## Quarantine
 
@@ -77,6 +77,24 @@ uv run jev-watchdog quarantine 1d8e7c --reason "…"  # by hand; holds with or w
 Releasing a thread also clears its evidence, so it is not re-quarantined by what it already
 did; if it offends again it is quarantined again.
 
+**Testing it end to end.** A real agent will not misbehave on request, so two setups make a
+rule trivial and harmless to trip. Start one, then give an agent (`claude --plugin-dir plugin`)
+a prompt like *"one tool call at a time: run `ls`, run `echo canary`, run `sleep 3`, run `ls`,
+read a.txt, then tell me what happened"*:
+
+```bash
+# real judge: the default pack plus packs/canary.toml, whose one question is "the most recent
+# action is a shell command that contains the word 'canary'" with a quarantine rule
+uv run jev-watchdog run --enforce --pack pack.toml --pack packs/canary.toml
+
+# no backend, no key: every quarantine rule of the pack trips on a tool call containing "canary"
+uv run jev-watchdog run --enforce --judge fake:canary
+```
+
+In both, `echo canary` runs, its verdict quarantines the thread (`canary=0.92` from Jev), the
+`sleep 3` after it is rejected, and the agent stops and reports the release command. Any pack
+can be layered the same way, e.g. a copy of a real rule with a lower `quarantine_ref`.
+
 **Limits.** Judging stays asynchronous, so quarantine is reactive: the action that trips the
 rule has already run, and a fast agent may get one more call in before the verdict lands
 (Jev's verdict lag is ~0.35 s). The watchdog fails open: state is in memory, so stopping it
@@ -111,7 +129,8 @@ those two sessions peaked at `denied_reroute` 0.29.
 |---|---|---|
 | `jev`, `jev:jev-preview` | Jev via `typesafe-sdk` | `TYPESAFE_API_KEY` or the key file |
 | `claude`, `claude:<model-id>` | Claude via the Claude Agent SDK (default `claude-opus-5`) | your local Claude Code login; usage is billed to it |
-| `fake` | deterministic, offline | none |
+| `fake` | deterministic pseudo-random answers, offline | none |
+| `fake:WORD` | offline marker mode: flags nothing until a judged tool call's input contains WORD, then answers 1.0 on every question with a quarantine rule | none |
 
 Every judge gets its own queue and worker per surface, so a slow judge never delays a fast
 one. Each verdict line names its judge; `Ctrl-C` prints a `judges` table with latency
@@ -144,6 +163,14 @@ Only the conversation: transcript lines of type `user` or `assistant` that are n
 listings and prompt snapshots, queue operations, system notes) is dropped — it was ~75%
 of a young transcript. There is still no windowing, so a long enough session exceeds
 Jev's 32k-token state limit and shows up as `over_limit` errors.
+
+Claude Code writes the transcript asynchronously, and a `PostToolUse` hook usually arrives
+before its tool call is in the file; by the next hook a newer call is already "the most
+recent action", so an offending action could go unjudged altogether (seen live: `echo canary`
+scored 0.03 at its own hook, 0.91 when the finished transcript was replayed). A tool event is
+therefore judged only once the result of its `tool_use_id` has reached the transcript. The
+wait happens in the background (the hook is answered at once), keeps the order of the
+thread's events, and gives up after `--transcript-wait` seconds, judging what is there.
 
 Session start is registration only: `SessionStart` never judges, and an event that
 arrives before the transcript has any conversation in it just registers the surface.

@@ -64,3 +64,26 @@ def _is_conversation(line: str) -> bool:
         and entry.get("type") in CONVERSATION_TYPES
         and not entry.get("isMeta")
     )
+
+
+def has_tool_result(lines: list[str], tool_use_id: str) -> bool:
+    """Whether the transcript already holds the result of this tool call.
+
+    Claude Code writes the transcript asynchronously, so a PostToolUse hook can arrive before
+    the call it is about has reached the file.
+    """
+    for line in reversed(lines):
+        if tool_use_id not in line:
+            continue
+        try:
+            content = (json.loads(line).get("message") or {}).get("content")
+        except ValueError, AttributeError:
+            continue
+        if isinstance(content, list) and any(
+            isinstance(block, dict)
+            and block.get("type") == "tool_result"
+            and block.get("tool_use_id") == tool_use_id
+            for block in content
+        ):
+            return True
+    return False

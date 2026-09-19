@@ -10,7 +10,7 @@ def test_run_defaults():
     assert args.port == DEFAULT_PORT == 8787
     assert args.judge == ["jev"]
     assert args.claude_thinking is False
-    assert args.pack == Path("pack.toml")
+    assert args.pack == [Path("pack.toml")]
     assert args.key_file == Path("prototype-throwaway-key")
     assert args.log is None
 
@@ -20,7 +20,7 @@ def test_run_overrides():
         ["run", "--port", "9000", "--judge", "fake", "--pack", "p.toml", "--log", "out.jsonl"]
     )
     assert args.judge == ["fake"]
-    assert (args.port, args.pack, args.log) == (9000, Path("p.toml"), Path("out.jsonl"))
+    assert (args.port, args.pack, args.log) == (9000, [Path("p.toml")], Path("out.jsonl"))
 
 
 def test_unknown_judge_is_rejected():
@@ -126,3 +126,8 @@ def test_control_commands_parse():
 def test_control_commands_report_a_missing_watchdog(capsys):
     assert main(["status", "--port", "1"]) == 1
     assert "no watchdog listening on port 1" in capsys.readouterr().err
+
+
+def test_pack_is_repeatable_and_replaces_the_default():
+    args = build_parser().parse_args(["run", "--pack", "pack.toml", "--pack", "packs/canary.toml"])
+    assert args.pack == [Path("pack.toml"), Path("packs/canary.toml")]

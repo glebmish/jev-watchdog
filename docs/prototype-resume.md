@@ -279,3 +279,14 @@ run's values **[once]**):
   see reroutes that *succeeded*.
 - Same caveat as section 7, more so: ref and limit are fitted to the corpus they are scored
   on, and quarantine ground truth was written by the same author as the rule.
+- **The transcript race was worse than section 7 said, and is fixed.** "A verdict may trail
+  by one line" understated it: live, the `PostToolUse` hook for `echo canary` was judged on a
+  transcript that did not contain the call yet (`canary` 0.03), and by the next hook the next
+  call was already the most recent action — the offending action was never judged, although a
+  replay of the same finished transcript scores it 0.91. Tool events now wait, in the
+  background and in order, until the result of their `tool_use_id` is in the transcript
+  (bounded by `--transcript-wait`, default 2 s; observed cost ≤ ~0.2 s of lag) **[live]**.
+- **End-to-end recipe.** `--pack` is repeatable and `packs/canary.toml` adds a rule that a
+  harmless `echo canary` trips through real Jev; `--judge fake:canary` does the same with no
+  backend. With either, a real headless session was quarantined by rule and its next call
+  rejected **[live, once each]**.

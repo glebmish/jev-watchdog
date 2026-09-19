@@ -1,5 +1,6 @@
 import asyncio
 import io
+import json
 
 import pytest
 from conftest import SESSION_ID, TRANSCRIPT_LINES, ScriptedJudge
@@ -298,7 +299,9 @@ RULED = [Question("exfil", "noul", "i", flag_threshold=0.55, quarantine_ref=0.45
 
 def ruled_registry(out, *judges, enforce=True) -> SurfaceRegistry:
     console = Console(file=out, width=200, color_system=None)
-    return SurfaceRegistry(list(judges), RULED, Printer(console), enforce=enforce)
+    return SurfaceRegistry(
+        list(judges), RULED, Printer(console), enforce=enforce, transcript_wait_s=0
+    )
 
 
 def deny_of(body) -> str:
@@ -434,4 +437,75 @@ async def test_a_rule_trip_on_a_manually_quarantined_thread_is_recorded(make_pay
     assert "rule:scripted also tripped: exfil=0.93" in entry.reason
     assert "would quarantine" not in out.getvalue()
     assert "also tripped" in out.getvalue()
+    await registry.shutdown()
+
+
+def behind_transcript(transcript, tool_use_id="t1"):
+    """Leave the transcript as Claude Code has it when PostToolUse fires: the result of the
+    tool call is not flushed yet. Returns a function that flushes it."""
+    block = {"type": "tool_result", "tool_use_id": tool_use_id, "content": "ok"}
+    line = json.dumps({"type": "user", "message": {"role": "user", "content": [block]}})
+
+    def flush():
+        with transcript.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+    return line, flush
+
+
+def waiting_registry(out, judge, wait_s) -> SurfaceRegistry:
+    console = Console(file=out, width=200, color_system=None)
+    return SurfaceRegistry([judge], QUESTIONS, Printer(console), transcript_wait_s=wait_s)
+
+
+async def test_a_tool_event_is_judged_once_its_result_reaches_the_transcript(
+    make_payload, transcript, out
+):
+    judge = FakeJudge()
+    registry = waiting_registry(out, judge, wait_s=5)
+    line, flush = behind_transcript(transcript)
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await asyncio.sleep(0.1)
+    assert judge.calls == []  # still waiting for the transcript
+    flush()
+    await registry.drain()
+    assert judge.calls[0].transcript_lines == [*TRANSCRIPT_LINES, line]
+    assert "behind" not in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_a_transcript_that_never_catches_up_is_judged_as_it_is(make_payload, transcript, out):
+    judge = FakeJudge()
+    registry = waiting_registry(out, judge, wait_s=0.1)
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await registry.drain()
+    assert judge.calls[0].transcript_lines == TRANSCRIPT_LINES
+    assert "transcript still behind after 100ms" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_waiting_keeps_the_order_of_a_threads_events(make_payload, transcript, out):
+    judge = FakeJudge()
+    registry = waiting_registry(out, judge, wait_s=5)
+    _, flush = behind_transcript(transcript)
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    registry.handle(make_payload("Stop"))
+    registry.handle(make_payload("SessionEnd"))
+    await asyncio.sleep(0.1)
+    assert judge.calls == []  # Stop does not overtake the waiting tool event
+    flush()
+    await registry.drain()
+    assert [call.event["hook_event_name"] for call in judge.calls] == ["PostToolUse", "Stop"]
+    await registry.shutdown()
+
+
+async def test_an_up_to_date_transcript_is_snapshotted_at_once(make_payload, transcript, out):
+    judge = FakeJudge()
+    registry = waiting_registry(out, judge, wait_s=5)
+    line, flush = behind_transcript(transcript)
+    flush()
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    transcript.write_text("", encoding="utf-8")  # replay overwrites the file right after handle()
+    await registry.drain()
+    assert judge.calls[0].transcript_lines == [*TRANSCRIPT_LINES, line]
     await registry.shutdown()

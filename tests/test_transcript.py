@@ -4,6 +4,7 @@ from jev_watchdog.transcript import (
     MAIN,
     SurfaceKey,
     conversation_lines,
+    has_tool_result,
     read_lines,
     resolve_transcript_path,
     surface_key,
@@ -83,3 +84,12 @@ def test_conversation_lines_keeps_only_user_and_assistant_lines_unmodified():
 
 def test_conversation_lines_of_nothing_is_nothing():
     assert conversation_lines([]) == []
+
+
+def test_has_tool_result_finds_the_result_block_of_a_tool_use():
+    use = '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash"}]}}'
+    result = '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1"}]}}'
+    assert not has_tool_result([use], "t1")  # the call alone is not the executed action
+    assert has_tool_result([use, result], "t1")
+    assert not has_tool_result([use, result], "t2")
+    assert not has_tool_result(['{"type":"user","message":"t1 mentioned in text"}', "{bad"], "t1")

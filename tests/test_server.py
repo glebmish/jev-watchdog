@@ -1,4 +1,5 @@
 import io
+import json
 
 import pytest
 from conftest import SESSION_ID
@@ -83,3 +84,37 @@ async def test_a_handler_bug_still_answers_an_empty_200(aiohttp_client, registry
     response = await client.post("/hooks", json=make_payload("PreToolUse"))
     assert response.status == 200 and await response.read() == b""
     assert registry.stats.errors == {"payload": 1}
+
+
+async def test_end_to_end_with_the_marker_judge_and_the_shipped_packs(aiohttp_client, make_payload):
+    """The documented offline recipe: run --enforce --judge fake:canary."""
+    from pathlib import Path
+
+    from jev_watchdog.judge.registry import JudgeConfig, make_judge
+    from jev_watchdog.pack import load_packs
+
+    repo = Path(__file__).resolve().parent.parent
+    questions = load_packs([repo / "pack.toml", repo / "packs" / "canary.toml"])
+    console = Console(file=io.StringIO(), width=200, color_system=None)
+    judge = make_judge("fake:canary", JudgeConfig())
+    registry = SurfaceRegistry(
+        [judge], questions, Printer(console), enforce=True, transcript_wait_s=0
+    )
+    client = await aiohttp_client(create_app(registry))
+
+    async def call(event, command, tool_use_id):
+        payload = make_payload(
+            event, tool_name="Bash", tool_input={"command": command}, tool_use_id=tool_use_id
+        )
+        response = await client.post("/hooks", json=payload)
+        await registry.drain()
+        return await response.read()
+
+    assert await call("PreToolUse", "ls", "t1") == b""
+    assert await call("PostToolUse", "ls", "t1") == b""
+    assert await call("PreToolUse", "echo canary", "t2") == b""  # reactive: it runs
+    assert await call("PostToolUse", "echo canary", "t2") == b""
+    denied = json.loads(await call("PreToolUse", "ls", "t3"))
+    assert denied["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert [entry.source for entry in registry.quarantines.all()] == ["rule:fake:canary"]
+    await registry.shutdown()

@@ -44,6 +44,17 @@ def load_pack(path: Path) -> list[Question]:
     return [_question(qid, table) for qid, table in tables.items()]
 
 
+def load_packs(paths: list[Path]) -> list[Question]:
+    """Several packs as one, in order; a question id may be defined only once."""
+    questions: dict[str, Question] = {}
+    for path in paths:
+        for question in load_pack(path):
+            if question.id in questions:
+                raise PackError(f"{path}: question {question.id!r} is defined in both packs")
+            questions[question.id] = question
+    return list(questions.values())
+
+
 def _question(qid: str, table: dict) -> Question:
     kind = table.get("kind")
     if kind not in KINDS:

@@ -33,7 +33,10 @@ def _make_claude(config: JudgeConfig) -> Judge:
 JUDGES: dict[str, Callable[[JudgeConfig], Judge]] = {
     "jev": _make_jev,
     "claude": _make_claude,
-    "fake": lambda config: FakeJudge(name=f"fake:{config.model}" if config.model else "fake"),
+    # fake:WORD is the marker mode, for end-to-end tests of quarantine without a backend
+    "fake": lambda config: FakeJudge(
+        name=f"fake:{config.model}" if config.model else "fake", trip_on=config.model
+    ),
 }
 
 

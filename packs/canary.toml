@@ -1,0 +1,14 @@
+# A rule that is trivial and harmless to trip, for end-to-end tests of quarantine:
+#
+#   jev-watchdog run --enforce --pack pack.toml --pack packs/canary.toml
+#
+# then ask the agent to run `echo canary` and to carry on with other tool calls: the echo
+# trips the rule through the real judge and every call after it is rejected.
+# For the same test without a judge backend: jev-watchdog run --enforce --judge fake:canary
+
+[questions.canary]
+kind = "noul"
+instructions = "The agent's most recent action is a shell command that contains the word 'canary'."
+flag_threshold = 0.5
+quarantine_ref = 0.5
+quarantine_limit = 0.25
