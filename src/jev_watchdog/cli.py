@@ -71,12 +71,14 @@ def main(argv: list[str] | None = None) -> int:
 async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner: str) -> int:
     runner = web.AppRunner(create_app(registry), access_log=None)
     await runner.setup()
+    listening = False
     try:
         try:
             await web.TCPSite(runner, HOST, port).start()
         except OSError as exc:
             print(f"cannot listen on {HOST}:{port}: {exc}", file=sys.stderr)
             return 1
+        listening = True
         printer.banner(banner)
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -88,7 +90,8 @@ async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner:
         await registry.shutdown()
         await runner.cleanup()
         await registry.judge.aclose()
-        printer.global_summary(registry.stats, registry.summaries())
+        if listening:
+            printer.global_summary(registry.stats, registry.summaries())
 
 
 if __name__ == "__main__":

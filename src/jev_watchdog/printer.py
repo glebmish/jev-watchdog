@@ -30,7 +30,7 @@ class Printer:
         self.clock = clock
 
     def banner(self, text: str) -> None:
-        self.console.print(Text(text, style="bold"))
+        self.console.print(Text(text, style="bold"), soft_wrap=True)
 
     def event(self, label: str, payload: dict) -> None:
         name = payload.get("hook_event_name", "?")
@@ -91,7 +91,8 @@ class Printer:
                 f" · latency p50 {_num(p50, 0)}ms p95 {_num(p95, 0)}ms"
                 f" · {_tokens(stats.input_tokens)} · ${stats.cost_usd:.4f}",
                 style="bold",
-            )
+            ),
+            soft_wrap=True,
         )
 
     def _prefix(self, label: str) -> Text:

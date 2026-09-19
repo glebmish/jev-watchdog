@@ -47,3 +47,25 @@ def test_missing_key_exits_with_a_clear_message(tmp_path):
     with pytest.raises(SystemExit) as err:
         resolve_api_key({}, tmp_path / "absent")
     assert "TYPESAFE_API_KEY" in str(err.value)
+
+
+async def test_port_in_use_exits_1_without_a_summary(capsys):
+    import io
+    import socket
+
+    from rich.console import Console
+
+    from jev_watchdog.cli import _serve
+    from jev_watchdog.judge.fake import FakeJudge
+    from jev_watchdog.printer import Printer
+    from jev_watchdog.surfaces import SurfaceRegistry
+
+    out = io.StringIO()
+    printer = Printer(Console(file=out, width=200, color_system=None))
+    registry = SurfaceRegistry(FakeJudge(), [], printer)
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen()
+        assert await _serve(registry, printer, busy.getsockname()[1], "banner") == 1
+    assert "cannot listen on 127.0.0.1" in capsys.readouterr().err
+    assert out.getvalue() == ""
