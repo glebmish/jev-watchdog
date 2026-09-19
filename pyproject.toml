@@ -1,0 +1,38 @@
+[project]
+name = "jev-watchdog"
+version = "0.1.0"
+description = "Observe-only watchdog that judges Claude Code agent threads with Jev on every hook event."
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "aiohttp>=3.13",
+    "rich>=14",
+    "typesafe-sdk>=0.7.0",
+]
+
+[project.scripts]
+jev-watchdog = "jev_watchdog.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "pytest-aiohttp>=1.1",
+    "pytest-asyncio>=1.0",
+    "ruff>=0.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/jev_watchdog"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: calls the real Jev API (needs a key); run with -m live"]
+
+[tool.ruff]
+line-length = 100
