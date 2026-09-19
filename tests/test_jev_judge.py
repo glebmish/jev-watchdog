@@ -118,3 +118,10 @@ def test_registry():
     assert make_judge("jev", JudgeConfig(api_key="apikey_test")).name == "jev"
     with pytest.raises(ValueError, match="unknown judge"):
         make_judge("nope", JudgeConfig())
+
+
+async def test_over_limit_message_is_concise():
+    error = status_error(ts.TypeSafeBadRequestError, 400, '{"error_type":"max_tokens_exceeded"}')
+    with pytest.raises(JudgeError) as err:
+        await JevJudge(client=FakeClient(error)).judge(request())
+    assert err.value.message == "transcript exceeds Jev's 32k-token state limit (2 lines sent)"

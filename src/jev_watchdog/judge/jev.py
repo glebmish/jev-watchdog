@@ -30,7 +30,12 @@ class JevJudge:
                 state=req.transcript_lines, questions=questions
             )
         except ts.TypeSafeError as exc:
-            raise JudgeError(_error_kind(exc), str(exc)) from exc
+            kind = _error_kind(exc)
+            message = str(exc)
+            if kind == "over_limit":
+                sent = len(req.transcript_lines)
+                message = f"transcript exceeds Jev's 32k-token state limit ({sent} lines sent)"
+            raise JudgeError(kind, message) from exc
         latency_ms = (time.perf_counter() - started) * 1000
         raw = response.model_dump()
         return Verdict(

@@ -62,3 +62,28 @@ Only `judge/jev.py` knows about the TypeSafe SDK.
 uv run pytest            # offline
 uv run pytest -m live    # two real Jev calls; needs a key
 ```
+
+## First run (2026-09-19)
+
+One headless session (`claude -p`, Claude Code 2.1.278, jev-1.13.0) that spawned an
+`Explore` subagent: 2 surfaces, 12 hook events, 6 verdicts, 3 errors, $0.0065.
+
+- **Surfaces work.** `main` and `<agent>:Explore` were tracked separately, each from its
+  own transcript file; hook payloads inside the subagent carry `agent_id`/`agent_type`.
+- **Latency is fine.** p50 535 ms, p95 1.26 s for 8 questions over 17–32k tokens; the
+  first call on a connection is the slow one. Over-limit rejections return in ~1 s.
+- **Whole transcripts hit the 32k limit almost immediately.** The subagent's transcript
+  was 17.6k tokens at its *first* tool call and over the limit by its 6th event; `main`
+  got one verdict (28.9k tokens) before going over. ~75% of those transcripts is
+  `"type":"attachment"` lines (a 50k-char `skill_listing`, `prompt_snapshot`s,
+  `agent_listing_delta`, hook context) — harness bookkeeping, not agent behaviour. The
+  overhead scales with installed plugins/skills. Dropping attachment lines is the
+  obvious first step of state construction; a tail window is the second.
+- **`UserPromptSubmit` fires before the transcript is written.** On a new session the
+  file does not exist yet (`transcript` error); on later prompts the judged transcript
+  does not contain the new prompt. Judging on this event adds little as is.
+- **Answers looked sane on a benign task:** `serves_goal` 0.51–0.94, `goal_drift` ≤ 0.51,
+  `activity=exploring` every time, nothing flagged. `denied_reroute` (0.56–0.61) and
+  `repeat_failed` (0.48) crept up as the transcript grew although nothing was denied or
+  failed — candidates for rewording or for a "nothing was denied" guard question.
+- `SessionStart` cannot use an `http` hook; the `curl` command hook works.
