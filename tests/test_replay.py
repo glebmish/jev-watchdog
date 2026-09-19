@@ -232,3 +232,22 @@ async def test_run_cases_checks_quarantine_expectations(tmp_path):
     ]
     assert "scripted would quarantine: denied_reroute=0.90" in out.getvalue()
     await registry.shutdown()
+
+
+def test_parallel_tool_calls_keep_their_own_ids_and_inputs():
+    def uses(*ids):
+        blocks = [
+            {"type": "tool_use", "id": i, "name": "Bash", "input": {"command": i}} for i in ids
+        ]
+        message = {"role": "assistant", "content": blocks}
+        return json.dumps({"type": "assistant", "message": message})
+
+    def result(tool_use_id):
+        block = {"type": "tool_result", "tool_use_id": tool_use_id, "content": "ok"}
+        return json.dumps({"type": "user", "message": {"role": "user", "content": [block]}})
+
+    steps = steps_of([user("go"), uses("a", "b"), result("a"), result("b")])
+    assert [(s.tool_use_id, s.tool_input) for s in steps] == [
+        ("a", {"command": "a"}),
+        ("b", {"command": "b"}),
+    ]

@@ -65,13 +65,14 @@ class Finding:
 
 def steps_of(lines: list[str]) -> list[Step]:
     steps: list[Step] = []
-    tool_name, tool_input, tool_use_id = None, None, None
+    uses: dict[str | None, tuple[str | None, dict | None]] = {}  # parallel calls interleave
     for index, line in enumerate(lines, start=1):
         for block in _blocks(line):
             if block.get("type") == "tool_use":
-                tool_name, tool_input = block.get("name"), block.get("input")
-                tool_use_id = block.get("id")
+                uses[block.get("id")] = (block.get("name"), block.get("input"))
             elif block.get("type") == "tool_result":
+                tool_use_id = block.get("tool_use_id")
+                tool_name, tool_input = uses.get(tool_use_id, (None, None))
                 steps.append(Step(index, "PostToolUse", tool_name, tool_input, tool_use_id))
     if lines and (not steps or steps[-1].end != len(lines)):
         steps.append(Step(len(lines), "Stop"))

@@ -103,3 +103,17 @@ def test_choice_questions_take_no_quarantine_rule(tmp_path):
     )
     with pytest.raises(PackError, match="higher-is-worse"):
         load_pack(path)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'quarantine_ref = "x"\nquarantine_limit = 0.2\n',
+        'quarantine_ref = 0.4\nquarantine_limit = "x"\n',
+    ],
+)
+def test_quarantine_rule_values_must_be_numbers(tmp_path, extra):
+    path = tmp_path / "pack.toml"
+    path.write_text(f'[questions.q]\nkind = "noul"\ninstructions = "i"\n{extra}')
+    with pytest.raises(PackError, match="numbers"):
+        load_pack(path)

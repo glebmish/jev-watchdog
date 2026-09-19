@@ -109,8 +109,12 @@ class SurfaceRegistry:
         """
         received_at = time.monotonic()
         event = payload.get("hook_event_name")
-        if not event or not payload.get("session_id") or not payload.get("transcript_path"):
-            self.bad_payload("missing hook_event_name, session_id or transcript_path")
+        required = (event, payload.get("session_id"), payload.get("transcript_path"))
+        if not all(isinstance(value, str) and value for value in required):
+            self.bad_payload("hook_event_name, session_id and transcript_path must be strings")
+            return None
+        if not isinstance(payload.get("agent_id"), str | None):
+            self.bad_payload("agent_id must be a string")
             return None
 
         surface = self._surface_for(payload)
@@ -190,9 +194,15 @@ class SurfaceRegistry:
         return blocking.deny_body()
 
     def _tripped(self, surface: Surface, judge: Judge, trip: Trip) -> None:
-        decides = self.enforce and judge is self.judges[0]
-        if not (decides and self._add(surface, trip.describe(), f"rule:{judge.name}")):
-            self.printer.quarantine(surface.label, judge.name, trip.describe(), enforced=False)
+        source, reason = f"rule:{judge.name}", trip.describe()
+        if not (self.enforce and judge is self.judges[0]):
+            self.printer.quarantine(surface.label, judge.name, reason, enforced=False)
+        elif self._add(surface, reason, source) is None:
+            # Already held by hand: keep the trip on the entry, so whoever thinks about
+            # releasing it sees that a rule wants it quarantined too.
+            note = f"{source} also tripped: {reason}"
+            self.quarantines.amend(surface.key, note)
+            self.printer.note(surface.label, f"already quarantined; {note}")
 
     def _add(self, surface: Surface, reason: str, source: str) -> Quarantine | None:
         entry = Quarantine(surface.key, surface.label, reason, source, self.printer.clock())

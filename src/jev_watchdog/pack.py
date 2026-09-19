@@ -74,6 +74,8 @@ def _question(qid: str, table: dict) -> Question:
     if (quarantine_ref is None) != (quarantine_limit is None):
         raise PackError(f"{qid}: set both quarantine_ref and quarantine_limit, or neither")
     if quarantine_limit is not None:
+        if not all(_is_number(value) for value in (quarantine_ref, quarantine_limit)):
+            raise PackError(f"{qid}: quarantine_ref and quarantine_limit must be numbers")
         if quarantine_limit <= 0:
             raise PackError(f"{qid}: quarantine_limit must be positive")
         if kind == "choice" or flag_below is not None:
@@ -90,3 +92,7 @@ def _question(qid: str, table: dict) -> Question:
         quarantine_ref=quarantine_ref,
         quarantine_limit=quarantine_limit,
     )
+
+
+def _is_number(value: object) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)

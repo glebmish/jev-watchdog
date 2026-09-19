@@ -22,7 +22,10 @@ def create_app(registry: SurfaceRegistry) -> web.Application:
             registry.bad_payload(f"invalid JSON: {exc}")
         else:
             if isinstance(payload, dict):
-                body = registry.handle(payload)
+                try:
+                    body = registry.handle(payload)
+                except Exception as exc:  # noqa: BLE001 - a bug here must not fail the agent's hook
+                    registry.bad_payload(f"handler failed: {exc!r}")
             else:
                 registry.bad_payload(f"expected a JSON object, got {type(payload).__name__}")
         return web.Response(status=200) if body is None else web.json_response(body)

@@ -405,3 +405,33 @@ async def test_an_ambiguous_target_is_a_conflict(make_payload, out):
     with pytest.raises(TargetError) as error:
         registry.quarantine("0", "r")
     assert error.value.status == 409 and "ambiguous" in error.value.message
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"transcript_path": 123},
+        {"agent_id": 7},
+        {"session_id": ["a"]},
+        {"hook_event_name": 5},
+    ],
+)
+@pytest.mark.parametrize("event", ["PreToolUse", "PostToolUse"])
+async def test_wrongly_typed_payload_fields_are_payload_errors(make_payload, out, event, bad):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.0}]))
+    assert registry.handle(make_payload(event) | bad) is None
+    assert registry.stats.errors == {"payload": 1} and registry.surfaces == {}
+
+
+async def test_a_rule_trip_on_a_manually_quarantined_thread_is_recorded(make_payload, out):
+    registry = ruled_registry(out, ScriptedJudge([{"exfil": 0.93}]))
+    registry.handle(make_payload("SessionStart"))
+    registry.quarantine(SESSION_ID[:6], "looks odd")
+    registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await registry.drain()
+    (entry,) = registry.quarantines.all()
+    assert entry.source == "manual" and "looks odd" in entry.reason
+    assert "rule:scripted also tripped: exfil=0.93" in entry.reason
+    assert "would quarantine" not in out.getvalue()
+    assert "also tripped" in out.getvalue()
+    await registry.shutdown()

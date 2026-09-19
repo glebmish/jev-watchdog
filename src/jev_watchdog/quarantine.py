@@ -1,6 +1,6 @@
 """Who is quarantined. In memory only: the watchdog fails open and forgets on restart."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from jev_watchdog.transcript import MAIN, SurfaceKey
@@ -49,6 +49,10 @@ class Quarantines:
             return False
         self._entries[quarantine.key] = quarantine
         return True
+
+    def amend(self, key: SurfaceKey, note: str) -> None:
+        entry = self._entries[key]
+        self._entries[key] = replace(entry, reason=f"{entry.reason}; {note}")
 
     def release(self, key: SurfaceKey) -> Quarantine | None:
         return self._entries.pop(key, None)

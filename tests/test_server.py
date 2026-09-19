@@ -72,3 +72,14 @@ async def test_control_errors_are_json(aiohttp_client, registry, path, body, sta
     client = await aiohttp_client(create_app(registry))
     response = await client.post(path, json=body)
     assert response.status == status and "error" in await response.json()
+
+
+async def test_a_handler_bug_still_answers_an_empty_200(aiohttp_client, registry, make_payload):
+    def boom(payload):
+        raise RuntimeError("bug")
+
+    registry.handle = boom
+    client = await aiohttp_client(create_app(registry))
+    response = await client.post("/hooks", json=make_payload("PreToolUse"))
+    assert response.status == 200 and await response.read() == b""
+    assert registry.stats.errors == {"payload": 1}
