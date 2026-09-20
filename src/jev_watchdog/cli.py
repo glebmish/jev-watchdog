@@ -18,7 +18,7 @@ from pathlib import Path
 from aiohttp import web
 from rich.console import Console
 
-from jev_watchdog import control
+from jev_watchdog import control, service
 from jev_watchdog.attach import AttachClient, AttachError
 from jev_watchdog.feed import Feed
 from jev_watchdog.judge.base import Judge
@@ -42,28 +42,36 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser(
         "run", help="listen for hooks in the foreground and judge every event"
     )
-    run.add_argument("--port", type=int, default=DEFAULT_PORT)
-    run.add_argument(
-        "--enforce",
-        action="store_true",
-        help="quarantine a thread when a pack rule trips and reject its tool calls; "
-        "without it, only report what would be quarantined",
-    )
-    run.add_argument(
-        "--transcript-wait",
-        type=float,
-        default=TRANSCRIPT_WAIT_S,
-        metavar="SECONDS",
-        help="how long a tool event may wait, in the background, for its tool call to reach "
-        f"the transcript before it is judged anyway; 0 = never wait. Default: {TRANSCRIPT_WAIT_S}",
-    )
     run.add_argument(
         "--tui",
         action="store_true",
         help="show the dashboard of `attach` instead of console lines; leaving it stops the "
         "watchdog",
     )
-    _add_judging_options(run)
+    install = commands.add_parser(
+        "install",
+        help="run in the background from now on: a launchd agent (macOS) or systemd user "
+        "unit (Linux) that runs `run` with these options, starts at login and restarts on a crash",
+    )
+    for command in (run, install):
+        command.add_argument("--port", type=int, default=DEFAULT_PORT)
+        command.add_argument(
+            "--enforce",
+            action="store_true",
+            help="quarantine a thread when a pack rule trips and reject its tool calls; "
+            "without it, only report what would be quarantined",
+        )
+        command.add_argument(
+            "--transcript-wait",
+            type=float,
+            default=TRANSCRIPT_WAIT_S,
+            metavar="SECONDS",
+            help="how long a tool event may wait, in the background, for its tool call to "
+            "reach the transcript before it is judged anyway; 0 = never wait. "
+            f"Default: {TRANSCRIPT_WAIT_S}",
+        )
+        _add_judging_options(command)
+    commands.add_parser("uninstall", help="stop the installed service and remove its unit")
 
     replay = commands.add_parser(
         "replay",
@@ -131,7 +139,7 @@ def _add_judging_options(command: argparse.ArgumentParser) -> None:
         "--log", type=Path, default=None, help="run log path (default <log dir>/<timestamp>.jsonl)"
     )
     command.add_argument(
-        "--log-dir", type=Path, default=Path("runs"), help="where a run log goes. Default: runs"
+        "--log-dir", type=Path, default=None, help="where a run log goes. Default: runs"
     )
 
 
@@ -167,6 +175,10 @@ def main(argv: list[str] | None = None) -> int:
         return _control(args)
     if args.command == "attach":
         return asyncio.run(_attach(args.port))
+    if args.command == "install":
+        return service.install(args)
+    if args.command == "uninstall":
+        return service.uninstall()
     try:
         questions = load_packs(args.pack)
     except (OSError, PackError) as exc:
@@ -184,7 +196,8 @@ def main(argv: list[str] | None = None) -> int:
     if len(set(names)) != len(names):  # e.g. jev and jev:jev-latest
         asyncio.run(_close(judges))
         raise SystemExit(f"--judge names the same judge more than once: {names}")
-    log_path = args.log or args.log_dir / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+    log_dir = args.log_dir or Path("runs")
+    log_path = args.log or log_dir / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # 0600: the log holds every prompt, tool input and tool output of the watched sessions.
     with open(log_path, "a", encoding="utf-8", opener=_private) as log_file:
