@@ -375,3 +375,11 @@ async def test_run_tui_stops_on_a_signal(socket_path):
     dashboard = _dashboard(attachment.socket, printer, headless=True)
     served = _serve(registry, printer, port, "banner", attachment, foreground=dashboard)
     assert await asyncio.wait_for(served, 5) == 0
+
+
+def test_output_that_is_not_a_terminal_is_wide_enough_for_the_tables(monkeypatch):
+    from jev_watchdog.cli import SERVICE_WIDTH, _console
+
+    monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+    assert _console().width == SERVICE_WIDTH
+    assert _console(quiet=True).quiet

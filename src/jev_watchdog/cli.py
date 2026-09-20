@@ -34,6 +34,7 @@ from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
 DEFAULT_PORT = 8787
 DEFAULT_KEY_FILE = Path("prototype-throwaway-key")
 HOST = "127.0.0.1"
+SERVICE_WIDTH = 200
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -204,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         feed = Feed() if args.command == "run" else None
         tui = args.command == "run" and args.tui
         # The dashboard owns the terminal; what the console would say is in its feed.
-        printer = Printer(Console(quiet=tui), log_file, feed=feed)
+        printer = Printer(_console(quiet=tui), log_file, feed=feed)
         enforce = args.command == "run" and args.enforce
         wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
         registry = SurfaceRegistry(
@@ -221,12 +222,18 @@ def main(argv: list[str] | None = None) -> int:
         banner = (
             f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={names}"
             f" · {len(questions)} questions · {_mode(registry)} · log={log_path}"
-            " · Ctrl-C to stop"
-        )
+        ) + (" · Ctrl-C to stop" if sys.stdout.isatty() else "")
         info = DaemonInfo(feed.boot, os.getpid(), datetime.now(), args.port, str(log_path))
         attachment = Attachment(feed, info, socket_path(args.port))
         foreground = _dashboard(attachment.socket, printer) if tui else None
         return asyncio.run(_serve(registry, printer, args.port, banner, attachment, foreground))
+
+
+def _console(quiet: bool = False) -> Console:
+    # A service's output is a file: rich would take it for 80 columns and fold the tables.
+    return (
+        Console(quiet=quiet) if sys.stdout.isatty() else Console(quiet=quiet, width=SERVICE_WIDTH)
+    )
 
 
 def _private(path: str, flags: int) -> int:
@@ -382,7 +389,7 @@ def _dashboard(socket: Path, printer: Printer, **app_options):
         finally:
             stopped.cancel()
             await client.aclose()
-            printer.console = Console()  # for the closing summary
+            printer.console = _console()  # for the closing summary
 
     return foreground
 

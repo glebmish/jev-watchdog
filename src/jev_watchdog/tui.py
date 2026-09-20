@@ -77,7 +77,7 @@ class WatchdogApp(App[None]):
     CSS = """
     #header { height: 1; padding: 0 1; background: $panel; }
     #top { height: 40%; min-height: 8; }
-    #threads { width: 45%; border: round $primary; }
+    #threads { width: 45%; height: 100%; border: round $primary; }
     #detail { height: 1fr; border: round $primary; }
     #context { height: auto; max-height: 4; padding: 0 2; }
     #feed { height: 1fr; border: round $primary; }
