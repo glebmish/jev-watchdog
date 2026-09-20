@@ -78,10 +78,12 @@ def test_run_arguments_keep_what_was_asked_about_logs_keys_and_waiting(tmp_path,
 
 
 def test_the_plist_restarts_a_crash_not_a_stop_and_carries_the_path():
-    plist = plistlib.loads(launchd_plist(["/py", "-m", "x", "run"], "/opt/bin", Path("/s/d.log")))
+    plist = plistlib.loads(
+        launchd_plist(["/py", "-m", "x", "run"], "/opt/bin", Path("/s/d.log"), Path("/st"))
+    )
     assert plist["Label"] == LABEL
     assert plist["ProgramArguments"] == ["/py", "-m", "x", "run"]
-    assert plist["EnvironmentVariables"] == {"PATH": "/opt/bin"}
+    assert plist["EnvironmentVariables"] == {"PATH": "/opt/bin", "XDG_STATE_HOME": "/st"}
     assert plist["RunAtLoad"] is True and plist["KeepAlive"] == {"SuccessfulExit": False}
     assert plist["ThrottleInterval"] == 10
     assert plist["StandardOutPath"] == plist["StandardErrorPath"] == "/s/d.log"
@@ -89,7 +91,9 @@ def test_the_plist_restarts_a_crash_not_a_stop_and_carries_the_path():
 
 
 def test_the_unit_restarts_on_failure_and_escapes_what_systemd_expands():
-    unit = systemd_unit(["/py", "run", "--context", '100% of $HOME\'s "files"'], "/opt/bin:/b%n")
+    unit = systemd_unit(
+        ["/py", "run", "--context", '100% of $HOME\'s "files"'], "/opt/bin:/b%n", Path("/st")
+    )
     assert "Restart=on-failure" in unit and "RestartSec=10" in unit
     assert "WantedBy=default.target" in unit
     assert 'ExecStart=/py run --context "100%% of $$HOME\'s \\"files\\""' in unit
@@ -98,7 +102,7 @@ def test_the_unit_restarts_on_failure_and_escapes_what_systemd_expands():
 
 def test_a_newline_cannot_go_into_a_unit():
     with pytest.raises(ServiceError, match="line break"):
-        systemd_unit(["/py", "run", "--context", "two\nlines"], "/bin")
+        systemd_unit(["/py", "run", "--context", "two\nlines"], "/bin", Path("/st"))
 
 
 def test_install_on_macos_writes_a_private_plist_and_bootstraps_it(home):
@@ -108,7 +112,7 @@ def test_install_on_macos_writes_a_private_plist_and_bootstraps_it(home):
     assert code == 0 and stat.S_IMODE(path.stat().st_mode) == 0o600
     plist = plistlib.loads(path.read_bytes())
     assert plist["ProgramArguments"][:4] == [sys.executable, "-m", "jev_watchdog.cli", "run"]
-    assert plist["EnvironmentVariables"] == {"PATH": "/opt/bin:/usr/bin"}
+    assert plist["EnvironmentVariables"]["PATH"] == "/opt/bin:/usr/bin"
     assert plist["StandardOutPath"] == str(home / "state/jev-watchdog/daemon.log")
     assert runner.commands == [["launchctl", "bootstrap", "gui/501", str(path)]]
     assert any("jev-watchdog attach" in line for line in lines)
@@ -199,3 +203,36 @@ def test_uninstall_on_linux_disables_the_unit(home):
         ["systemctl", "--user", "daemon-reload"],
     ]
     assert not (home / ".config/systemd/user/jev-watchdog.service").exists()
+
+
+# --- found in review --------------------------------------------------------------------------
+
+
+def test_the_unit_pins_the_state_dir_so_service_and_attach_agree_on_the_socket(home):
+    """A service does not see an XDG_STATE_HOME exported from a shell profile."""
+    do_install(home, Runner(), "--judge", "fake", "--pack", PACK)
+    plist = plistlib.loads((home / "Library/LaunchAgents" / f"{LABEL}.plist").read_bytes())
+    assert plist["EnvironmentVariables"]["XDG_STATE_HOME"] == str(home / "state")
+    do_install(home, Runner(), "--judge", "fake", "--pack", PACK, platform="linux")
+    unit = (home / ".config/systemd/user/jev-watchdog.service").read_text()
+    assert f'Environment="XDG_STATE_HOME={home / "state"}"' in unit
+
+
+def test_a_dollar_is_literal_in_an_environment_line_and_doubled_in_a_command():
+    unit = systemd_unit(["/py", "run", "--context", "$HOME"], "/opt/my$tools/bin", Path("/st"))
+    assert 'Environment="PATH=/opt/my$tools/bin"' in unit
+    assert 'ExecStart=/py run --context "$$HOME"' in unit
+
+
+def test_a_socket_file_nobody_listens_on_is_not_a_running_watchdog(socket_path):
+    import socket
+
+    from jev_watchdog.service import _came_up
+
+    socket_path.write_text("left by a killed watchdog")
+    assert _came_up(socket_path, 0.2) is False
+    socket_path.unlink()
+    with socket.socket(socket.AF_UNIX) as listener:
+        listener.bind(str(socket_path))
+        listener.listen()
+        assert _came_up(socket_path, 1.0) is True

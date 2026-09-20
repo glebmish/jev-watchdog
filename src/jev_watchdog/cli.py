@@ -19,7 +19,7 @@ from aiohttp import web
 from rich.console import Console
 
 from jev_watchdog import control, service
-from jev_watchdog.attach import AttachClient, AttachError
+from jev_watchdog.attach import AttachClient, AttachError, ControlError
 from jev_watchdog.feed import Feed
 from jev_watchdog.judge.base import Judge
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
@@ -401,7 +401,7 @@ async def _attach(port: int) -> int:
     try:
         try:
             await client.state()
-        except AttachError:
+        except AttachError, ControlError:  # nothing there, or something that is not one
             print(f"no watchdog to attach to on port {port}", file=sys.stderr)
             return 1
         await WatchdogApp(client).run_async()

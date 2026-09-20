@@ -14,6 +14,7 @@ from jev_watchdog.transcript import SurfaceKey
 
 HISTORY = 500  # verdicts kept per thread and judge
 MARKS = 100  # per thread
+THREADS = 200  # most recently judged or marked; state.MAX_THREADS is what a dashboard shows
 
 
 @dataclass(frozen=True)
@@ -32,9 +33,11 @@ class Mark:
 
 
 class History:
-    def __init__(self, rules: list[Question], size: int = HISTORY) -> None:
+    def __init__(self, rules: list[Question], size: int = HISTORY, threads: int = THREADS) -> None:
         self.limits = {rule.id: rule.quarantine_limit for rule in rules}
         self._size = size
+        self._threads = threads
+        self._recent: dict[SurfaceKey, None] = {}  # insertion-ordered: oldest first
         self._points: dict[SurfaceKey, dict[str, deque[Point]]] = {}
         self._marks: dict[SurfaceKey, deque[Mark]] = {}
 
@@ -47,14 +50,26 @@ class History:
         flagged: int,
         folded: bool,
     ) -> None:
+        self._touch(key)
         points = self._points.setdefault(key, {}).setdefault(judge, deque(maxlen=self._size))
         points.append(Point(ts, dict(evidence), flagged, folded))
 
     def mark(self, key: SurfaceKey, ts: datetime, kind: str, judge: str | None = None) -> None:
+        self._touch(key)
         self._marks.setdefault(key, deque(maxlen=MARKS)).append(Mark(ts, kind, judge))
         if kind == "release":  # Decider.reset: every judge's evidence starts over
             for points in self._points.get(key, {}).values():
                 points.append(Point(ts, {}, 0, True))
+
+    def _touch(self, key: SurfaceKey) -> None:
+        """A service runs for weeks: keep the threads that were last heard of, drop the rest."""
+        self._recent.pop(key, None)
+        self._recent[key] = None
+        while len(self._recent) > self._threads:
+            oldest = next(iter(self._recent))
+            del self._recent[oldest]
+            self._points.pop(oldest, None)
+            self._marks.pop(oldest, None)
 
     def series(self, key: SurfaceKey) -> dict:
         """One thread, every judge: what the evidence chart draws."""

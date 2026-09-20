@@ -65,3 +65,13 @@ def test_close_ends_every_subscriber():
     assert second.queue.get_nowait() is None
     feed.publish({"n": 0})
     assert first.queue.empty()
+
+
+def test_a_subscription_to_a_closed_feed_ends_at_once():
+    """Or an /events accepted during shutdown would hold the server's cleanup up."""
+    feed = Feed()
+    feed.close()
+    late = feed.subscribe()
+    assert late.queue.get_nowait() is None
+    feed.publish({"n": 0})
+    assert late.queue.empty()

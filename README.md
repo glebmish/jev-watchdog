@@ -126,7 +126,8 @@ Linux machine.
 
 A service has no working directory and no shell environment, so `install` writes `--pack`,
 `--key-file` and the log options as absolute paths, carries your current `PATH` along (the
-`claude` and `codex` judges are found through it), and checks what `run` would refuse at
+`claude` and `codex` judges are found through it) and your state directory (so the service
+puts its socket where `attach` will look, whatever `XDG_STATE_HOME` your shell sets), and checks what `run` would refuse at
 start: the packs load, and the Jev judge has a key file. The API key is never written into the
 unit; with only `TYPESAFE_API_KEY` set, `install` stops and asks for `--key-file`. Everything
 else lives in `~/.local/state/jev-watchdog/` (or `$XDG_STATE_HOME/jev-watchdog/`), mode 0700:
@@ -173,7 +174,8 @@ The lower half is one of four views, on the keys `1` to `4`:
   time spent queued behind earlier events: that judge is not keeping up.
 
 `j` changes whose view the evidence and the timeline show. The watchdog keeps the last 500
-verdicts per thread and judge for these charts, in memory like everything else.
+verdicts per thread and judge for these charts, for the 200 threads it heard of last, in
+memory like everything else.
 
 The dashboard talks to the watchdog over a unix socket,
 `~/.local/state/jev-watchdog/attach-<port>.sock`, mode 0600. What it reads there, `/state` and

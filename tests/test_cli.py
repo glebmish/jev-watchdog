@@ -383,3 +383,14 @@ def test_output_that_is_not_a_terminal_is_wide_enough_for_the_tables(monkeypatch
     monkeypatch.setattr("sys.stdout.isatty", lambda: False)
     assert _console().width == SERVICE_WIDTH
     assert _console(quiet=True).quiet
+
+
+def test_attach_to_something_that_refuses_state_says_so_without_a_traceback(monkeypatch, capsys):
+    from jev_watchdog.attach import AttachClient, ControlError
+
+    async def refuses(self):
+        raise ControlError("HTTP 404")
+
+    monkeypatch.setattr(AttachClient, "state", refuses)
+    assert main(["attach", "--port", "1"]) == 1
+    assert "no watchdog to attach to on port 1" in capsys.readouterr().err

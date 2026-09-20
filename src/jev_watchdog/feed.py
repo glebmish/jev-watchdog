@@ -26,6 +26,7 @@ class Feed:
         self._queue_size = queue_size
         self._subscriptions: list[Subscription] = []
         self._seq = 0
+        self._closed = False
 
     def publish(self, record: dict) -> dict:
         self._seq += 1
@@ -41,7 +42,12 @@ class Feed:
     def subscribe(self, since: int = 0) -> Subscription:
         backlog = [record for record in self._records if record["seq"] > since]
         subscription = Subscription(backlog, asyncio.Queue(self._queue_size))
-        self._subscriptions.append(subscription)
+        if self._closed:
+            # An /events accepted while the watchdog stops: left open, it would hold the
+            # server's cleanup up for aiohttp's whole shutdown timeout.
+            subscription.queue.put_nowait(None)
+        else:
+            self._subscriptions.append(subscription)
         return subscription
 
     def unsubscribe(self, subscription: Subscription) -> None:
@@ -49,6 +55,7 @@ class Feed:
             self._subscriptions.remove(subscription)
 
     def close(self) -> None:
+        self._closed = True
         for subscription in list(self._subscriptions):
             self._end(subscription)
 

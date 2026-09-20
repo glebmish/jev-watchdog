@@ -10,6 +10,7 @@ import argparse
 import os
 import plistlib
 import re
+import socket as sockets
 import subprocess
 import sys
 import time
@@ -61,12 +62,14 @@ def run_arguments(args: argparse.Namespace, state: Path) -> list[str]:
     return arguments
 
 
-def launchd_plist(command: list[str], path_env: str, log: Path) -> bytes:
+def launchd_plist(command: list[str], path_env: str, log: Path, state_home: Path) -> bytes:
     return plistlib.dumps(
         {
             "Label": LABEL,
             "ProgramArguments": command,
-            "EnvironmentVariables": {"PATH": path_env},
+            # A service sees no shell profile. Without the state home the watchdog would put
+            # its socket under the default while `attach` looks where the shell says.
+            "EnvironmentVariables": {"PATH": path_env, "XDG_STATE_HOME": str(state_home)},
             "RunAtLoad": True,
             # A stop (exit 0) stays stopped; a crash or a taken port (exit 1) is retried.
             # Whoever holds the port also gets the hooks, so taking it back is what is wanted.
@@ -79,14 +82,15 @@ def launchd_plist(command: list[str], path_env: str, log: Path) -> bytes:
     )
 
 
-def systemd_unit(command: list[str], path_env: str) -> str:
+def systemd_unit(command: list[str], path_env: str, state_home: Path) -> str:
     return (
         "[Unit]\n"
         "Description=jev-watchdog: judges Claude Code agent threads\n"
         "\n"
         "[Service]\n"
         f"ExecStart={' '.join(_unit_word(word) for word in command)}\n"
-        f"Environment={_unit_word('PATH=' + path_env, quote=True)}\n"
+        f"Environment={_unit_word('PATH=' + path_env, environment=True)}\n"
+        f"Environment={_unit_word(f'XDG_STATE_HOME={state_home}', environment=True)}\n"
         "Restart=on-failure\n"
         f"RestartSec={RESTART_DELAY_S}\n"
         "\n"
@@ -114,10 +118,10 @@ def install(
         path_env = env.get("PATH", os.defpath)
         if platform == "darwin":
             unit = _plist_path(home)
-            content = launchd_plist(command, path_env, state / "daemon.log")
+            content = launchd_plist(command, path_env, state / "daemon.log", state.parent)
         else:
             unit = _unit_path(home)
-            content = systemd_unit(command, path_env).encode()
+            content = systemd_unit(command, path_env, state.parent).encode()
     except ServiceError as exc:
         out(str(exc))
         return 1
@@ -237,12 +241,19 @@ def _manager(
 
 
 def _came_up(socket: Path, wait_s: float) -> bool:
+    """Whether something answers on the socket. The file alone may be a killed watchdog's."""
     deadline = time.monotonic() + wait_s
-    while time.monotonic() < deadline:
-        if socket.exists():
-            return True
+    while True:
+        try:
+            with sockets.socket(sockets.AF_UNIX) as probe:
+                probe.settimeout(1.0)
+                probe.connect(str(socket))
+                return True
+        except OSError:
+            pass
+        if time.monotonic() >= deadline:
+            return False
         time.sleep(0.1)
-    return False
 
 
 def _plist_path(home: Path) -> Path:
@@ -253,10 +264,15 @@ def _unit_path(home: Path) -> Path:
     return home / ".config" / "systemd" / "user" / UNIT_NAME
 
 
-def _unit_word(word: str, quote: bool = False) -> str:
-    """One argument of a unit's command line: systemd's quoting, its % and $ made literal."""
+def _unit_word(word: str, environment: bool = False) -> str:
+    """One word of a unit file in systemd's quoting, with what systemd expands made literal.
+
+    Specifiers (%) are expanded everywhere. Variables ($) are expanded in a command line only:
+    in an Environment= assignment a $ is already literal, and $$ would stay two characters.
+    """
     if "\n" in word or "\r" in word:
         raise ServiceError(f"a unit file cannot hold a line break: {word!r}")
-    if quote or not _BARE.fullmatch(word):
+    if environment or not _BARE.fullmatch(word):
         word = '"' + word.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return word.replace("%", "%%").replace("$", "$$")
+    word = word.replace("%", "%%")
+    return word if environment else word.replace("$", "$$")

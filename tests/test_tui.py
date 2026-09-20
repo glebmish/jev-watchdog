@@ -424,3 +424,23 @@ async def test_the_number_keys_switch_the_view_and_the_charts_ask_for_their_data
         await pilot.press("1")
         await until(pilot, lambda: len(feed_lines(app)) == 2, "the feed kept what it had")
         assert app.is_running
+
+
+async def test_a_refused_chart_request_does_not_stop_the_dashboard_from_updating():
+    """The daemon may be older than the dashboard: its no is not the end of /state."""
+    client = two_threads()
+
+    async def refuses(*_args, **_kwargs):
+        raise ControlError("minutes or buckets out of range")
+
+    client.timeline = refuses
+    app = make_app(client)
+    async with app.run_test(size=(140, 40), notifications=True) as pilot:
+        await until(pilot, lambda: len(thread_labels(app)) == 2, "threads listed")
+        await pilot.press("3")
+        await until(pilot, lambda: len(app._notifications) >= 1, "said so")
+        third = thread("cccccc/main", "main", session_id="cccccc-session")
+        client.current = make_state(third, *client.current["threads"])
+        client.publish(note(3, "cccccc/main", "later"))
+        await until(pilot, lambda: len(thread_labels(app)) == 3, "state still followed")
+        assert len(app._notifications) == 1  # said once, not four times a second

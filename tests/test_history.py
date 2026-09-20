@@ -82,3 +82,17 @@ def test_timeline_is_the_worst_share_of_a_limit_per_bucket():
     claude = history.timeline(threads, "claude", now=at(60), minutes=60, buckets=6)
     assert claude["threads"][0]["cells"][0] == 1.0
     assert claude["threads"][0]["marks"] == {"0": "trip", "3": "quarantine", "5": "release"}
+
+
+def test_only_the_most_recently_judged_threads_are_kept():
+    """A service runs for weeks; the dashboard never shows more threads than this."""
+    history = History(RULES, threads=2)
+    keys = [SurfaceKey(f"s{n}", "main") for n in range(3)]
+    for n, key in enumerate(keys):
+        history.record(key, "jev", at(n), {"exfil": 0.1}, flagged=0, folded=True)
+        history.mark(key, at(n), "trip", judge="jev")
+    history.record(keys[1], "jev", at(5), {"exfil": 0.2}, flagged=0, folded=True)  # still alive
+    history.record(SurfaceKey("s3", "main"), "jev", at(6), {"exfil": 0.1}, flagged=0, folded=True)
+    kept = [key for key in [*keys, SurfaceKey("s3", "main")] if history.series(key)["judges"]]
+    assert kept == [keys[1], SurfaceKey("s3", "main")]
+    assert history.series(keys[0])["marks"] == [] and history.series(keys[2])["marks"] == []

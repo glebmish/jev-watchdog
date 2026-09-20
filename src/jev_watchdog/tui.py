@@ -133,6 +133,7 @@ class WatchdogApp(App[None]):
         self._judge = 0
         self._view = "feed"
         self._window = 0  # index into WINDOWS_MIN
+        self._complained: str | None = None  # the last thing the state loop complained of
 
     def compose(self) -> ComposeResult:
         yield Static(id="header")
@@ -218,8 +219,18 @@ class WatchdogApp(App[None]):
                 state = await self.client.state()
                 self._show_state(state)
                 await self._show_view()
+                self._complained = None
             except AttachError:
                 continue  # _follow says so in the header
+            except Exception as exc:  # noqa: BLE001 - this loop is all that keeps the screen true
+                # The watchdog's no (an older one may not know a chart's request), or an
+                # answer in a shape this dashboard does not draw. Say it once and keep asking.
+                complaint = (
+                    f"{self._view}: {exc!r}" if not isinstance(exc, ControlError) else str(exc)
+                )
+                if complaint != self._complained:
+                    self._complained = complaint
+                    self.notify(printable(complaint), severity="warning", markup=False)
 
     def _set_live(self, live: bool) -> None:
         self._live = live

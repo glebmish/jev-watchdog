@@ -130,7 +130,8 @@ attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own sock
 - **The feed never holds up a hook.** `Feed.publish` is synchronous and only `put_nowait`s. A
   subscriber whose queue (1000) is full is removed and its stream ended with `None`; the
   dashboard comes back with `?since=<last seq>`. `Feed.close()` runs first at shutdown, or the
-  open `/events` handlers would hold `runner.cleanup()` up.
+  open `/events` handlers would hold `runner.cleanup()` up; a subscription made after it ends
+  at once, for the `/events` that was accepted just before.
 - **Session content is not on the port.** `/state` and `/events` are routed only in the app
   that `cli._serve` puts on the unix socket (0600, in a 0700 directory). The TCP port is bound
   first; holding it, the process owns that port's socket path and replaces a stale file. On a
@@ -142,18 +143,25 @@ attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own sock
   `_add`, `release` and a non-enforced `_tripped` store marks; a release also appends an empty
   point per judge, because `Decider.reset` starts every judge's evidence over. `/timeline` is
   bucketed on the server (at most `MAX_TIMELINE_BUCKETS` cells for 200 threads), and a cell is
-  the worst `evidence / limit` of its points.
+  the worst `evidence / limit` of its points. `History` keeps the `THREADS` (200) it heard of
+  last and drops the rest, points and marks: the registry itself never forgets a thread, but
+  this is what grows per verdict.
 - **The dashboard computes nothing.** Statistics and evidence come from `/state`, asked again
   at most every `TICK_S` (0.25 s) while records arrive and every `IDLE_REFRESH_S` (2 s)
   otherwise. A new `boot` in `hello` is a restarted watchdog: the feed is cleared and read
   from 0. Thread rows are updated in place, oldest first, so none moves under the cursor.
   Widgets are kept from `on_mount`: `query_one` searches the screen on top, and state keeps
-  arriving while the question of `x` or `c` is open.
+  arriving while the question of `x` or `c` is open. The state loop survives everything but
+  cancellation: a refusal (an older watchdog may not know a chart's request) or an answer it
+  cannot draw is a notification, once, and the next tick asks again.
 - **Agent-chosen text reaches the dashboard as `Text` through `printable`**, border titles
   through `textual.markup.escape`, notifications with `markup=False`.
 - **A unit never holds the key.** `service.install` checks what `run` would refuse (packs,
   duplicate judges, a key file for the Jev judge), writes absolute paths and the current
-  `PATH`, and refuses when only `TYPESAFE_API_KEY` is set. launchd: `KeepAlive.SuccessfulExit
+  `PATH`, pins `XDG_STATE_HOME` to the installing shell's (a service sees no shell profile, and
+  `paths.socket_path` must give the service and `attach` the same answer), and refuses when
+  only `TYPESAFE_API_KEY` is set. `install` reports `running` only when something accepts a
+  connection on the socket: the file alone may be a killed watchdog's. launchd: `KeepAlive.SuccessfulExit
   = false`, so a stop stays stopped and a crash or a taken port is retried every 10 s.
 - **Fails open, state in memory.** `Quarantines`, `Decider` and `contexts` are plain dicts; a
   restart forgets them. `MAX_BODY_BYTES` is 64 MiB because a 413 would mean allow;
