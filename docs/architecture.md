@@ -186,14 +186,18 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
   only `TYPESAFE_API_KEY` is set. `install` reports `running` only when something accepts a
   connection on the socket: the file alone may be a killed watchdog's. launchd: `KeepAlive.SuccessfulExit
   = false`, so a stop stays stopped and a crash or a taken port is retried every 10 s.
-- **The registry forgets, in one place.** `SurfaceRegistry.surfaces` is kept in the order
-  threads were last heard from (`_surface_for` re-inserts), and `_forget` drops the least
-  recent beyond `MAX_THREADS` (200): its workers are cancelled, its evidence (`Decider.reset`),
-  history (`History.forget`) and, with the last thread of a session, its context go with it. A
-  quarantined thread is never dropped: it has to be there to be released. A forgotten thread
-  that speaks again is a new thread, without its evidence. `/state`, `/timeline` and the
-  closing summary show what the registry holds, in its order, so nothing else sorts or caps;
-  `GlobalStats` still counts everything that was seen.
+- **The registry forgets by age, in one place.** `SurfaceRegistry.surfaces` is kept in the
+  order threads were last heard from (`_surface_for` re-inserts), and on every event `_forget`
+  drops from the old end whatever has been silent for `THREAD_TTL` (24 h): its workers are
+  cancelled, its evidence (`Decider.reset`), history (`History.forget`) and, with the last
+  thread of a session, its context go with it. There is no cap on how many: a swarm is kept
+  whole. A quarantined thread is never dropped: it has to be there to be released. A forgotten
+  thread that speaks again is a new thread, without its evidence. `GlobalStats` still counts
+  everything that was seen.
+- **A poll is bounded, memory is not.** `state.shown` sends a dashboard the `MAX_SHOWN` (200)
+  threads heard from last plus every quarantined one, in the registry's order, for `/state`
+  and `/timeline` alike: a slice, no sort. The closing summary prints every thread still
+  remembered, which is about 3 s per 1000.
 - **Fails open, state in memory.** `Quarantines`, `Decider` and `contexts` are plain dicts; a
   restart forgets them. `MAX_BODY_BYTES` is 64 MiB because a 413 would mean allow;
   `Printer._log` drops the run log on a write error rather than fail a deny.

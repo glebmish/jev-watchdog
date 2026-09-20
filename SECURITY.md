@@ -19,10 +19,10 @@ agent. Only the latest commit on `main` is supported.
   the run logs are not rotated.
 - **The localhost endpoints have no authentication.** Any local process, the watched agent
   included, can release a thread, set a context, quarantine one or post made-up hook events.
-- **Evidence is forgotten with the thread.** The watchdog keeps the 200 threads it heard from
-  last. A thread that is pushed out by 200 others, or a session that is left and resumed after
-  that, starts again with no evidence. Whoever can post hook events can also post 200 made-up
-  sessions to push a thread out; they could already release it (below).
+- **Evidence is forgotten with the thread.** A thread that has been silent for 24 hours is
+  forgotten, and if it is resumed after that it starts again with no evidence. Nothing but
+  time pushes a thread out, so posting made-up sessions does not; it does grow the watchdog's
+  memory, which has no cap on the number of threads.
 - **Quarantine is reactive and fails open.** The action that trips a rule has already run.
   State is in memory; a stopped, hung or slow watchdog, a non-2xx or a late answer all mean
   *allow* to Claude Code.

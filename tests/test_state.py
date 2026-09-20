@@ -94,12 +94,16 @@ async def test_context_is_the_sessions_or_the_default(make_payload):
     assert snapshot(registry, INFO, STARTED)["threads"][0]["context"] == "just here"
 
 
-async def test_threads_come_as_the_registry_keeps_them_the_least_recently_heard_of_first(
-    make_payload,
+async def test_a_dashboard_is_sent_the_threads_heard_from_last_and_every_quarantined_one(
+    make_payload, monkeypatch
 ):
-    registry = make_registry(ScriptedJudge([{}], name="jev"), max_threads=2)
-    for session in ("aaaa-1", "bbbb-2", "aaaa-1", "cccc-3"):
+    monkeypatch.setattr("jev_watchdog.state.MAX_SHOWN", 3)
+    registry = make_registry(ScriptedJudge([{}], name="jev"))
+    for session in ("aaaa-1", "bbbb-2", "cccc-3", "dddd-4", "bbbb-2", "eeee-5"):
         await registry.handle(make_payload("SessionStart", session_id=session))
+    registry.quarantine("aaaa", "held")
     state = snapshot(registry, INFO, STARTED)
-    assert [thread["session_id"] for thread in state["threads"]] == ["aaaa-1", "cccc-3"]
-    assert state["totals"]["surfaces"] == 3  # what was seen, not what is kept
+    assert [thread["session_id"] for thread in state["threads"]] == [
+        "aaaa-1", "dddd-4", "bbbb-2", "eeee-5",
+    ]  # fmt: skip
+    assert len(registry.surfaces) == 5 and state["totals"]["surfaces"] == 5  # all remembered

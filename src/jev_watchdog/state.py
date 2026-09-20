@@ -17,6 +17,9 @@ from jev_watchdog.stats import ChoiceStat, JudgeSurfaceStats, NumericStat
 from jev_watchdog.surfaces import Surface, SurfaceRegistry
 from jev_watchdog.transcript import SurfaceKey
 
+# The watchdog keeps a swarm whole; a dashboard is sent the threads heard from last, and every
+# quarantined one. This bounds a poll, not what is remembered (surfaces.THREAD_TTL does that).
+MAX_SHOWN = 200
 RECENT_JUDGMENTS = 200  # of each judge's latencies and lags, for the dashboard's chart
 MAX_TIMELINE_MINUTES = 7 * 24 * 60
 MAX_TIMELINE_BUCKETS = 400
@@ -40,7 +43,7 @@ def add_routes(app: web.Application, registry: SurfaceRegistry, feed: Feed) -> N
         minutes = min(max(_number(request, "minutes", 60), 1), MAX_TIMELINE_MINUTES)
         buckets = min(max(_number(request, "buckets", 60), 1), MAX_TIMELINE_BUCKETS)
         judge = request.query.get("judge") or registry.judges[0].name
-        threads = [(surface.key, surface.label) for surface in registry.surfaces.values()]
+        threads = [(surface.key, surface.label) for surface in shown(registry)]
         now = registry.printer.clock()
         return web.json_response(registry.history.timeline(threads, judge, now, minutes, buckets))
 
@@ -87,9 +90,15 @@ def snapshot(registry: SurfaceRegistry, boot: str, now: datetime) -> dict:
             "rejected": stats.rejected,
             "cost_usd": stats.cost_usd,
         },
-        # As the registry keeps them: the least recently heard of first.
-        "threads": [_thread(registry, surface) for surface in registry.surfaces.values()],
+        "threads": [_thread(registry, surface) for surface in shown(registry)],
     }
+
+
+def shown(registry: SurfaceRegistry) -> list[Surface]:
+    """In the registry's order, the least recently heard of first."""
+    surfaces = list(registry.surfaces.values())
+    held = [s for s in surfaces[:-MAX_SHOWN] if s.key in registry.quarantines]
+    return held + surfaces[-MAX_SHOWN:]
 
 
 def _thread(registry: SurfaceRegistry, surface: Surface) -> dict:
