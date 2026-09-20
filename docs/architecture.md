@@ -63,6 +63,8 @@ cli._serve: TCPSite 127.0.0.1:<port>   create_app(registry)               |
             UnixSite attach-<port>.sock, 0600: create_app(registry, feed, info)
                  GET /state   state.snapshot: threads, statistics, evidence, quarantines
                  GET /events  SSE: hello {boot}, backlog after ?since, live records
+                 GET /history   History.series: one thread's evidence per verdict, marks
+                 GET /timeline  History.timeline: every thread, bucketed on the server
                       ^
 attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own socket)
                           x / r / c --> POST /quarantine | /release | /context, same socket
@@ -76,6 +78,7 @@ attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own sock
 | `server` | aiohttp app: `/hooks`, control endpoints, `/state` and `/events` when given a feed, request guard, body cap. |
 | `feed` | Ring buffer of display records with a rising `seq`; subscribers, the slow ones dropped. |
 | `state` | `snapshot`: the registry as one JSON document, newest 200 threads. |
+| `history` | Last 500 verdicts per thread and judge with the evidence they left; quarantine, release and trip marks; `series` and the bucketed `timeline`. Decides nothing. |
 | `paths` | State directory (`$XDG_STATE_HOME/jev-watchdog`), socket path per port, 0700 directory. |
 | `attach` | `AttachClient`: state, events (SSE) and control over the socket. |
 | `tui` | `WatchdogApp` (Textual): threads, one thread's statistics, feed, control keys. |
@@ -134,6 +137,12 @@ attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own sock
   unix connection `server._refusal` skips the `Host` check (no port, and no page can open a
   socket file) and keeps the `Origin` and content-type checks. Without a socket `run` carries
   on and says `attach unavailable`; `run --tui` exits 1.
+- **Charts are drawn from `History`, not from the feed.** `SurfaceRegistry._record` stores the
+  evidence each verdict left (`folded` marks tool events, the only ones that move it), and
+  `_add`, `release` and a non-enforced `_tripped` store marks; a release also appends an empty
+  point per judge, because `Decider.reset` starts every judge's evidence over. `/timeline` is
+  bucketed on the server (at most `MAX_TIMELINE_BUCKETS` cells for 200 threads), and a cell is
+  the worst `evidence / limit` of its points.
 - **The dashboard computes nothing.** Statistics and evidence come from `/state`, asked again
   at most every `TICK_S` (0.25 s) while records arrive and every `IDLE_REFRESH_S` (2 s)
   otherwise. A new `boot` in `hello` is a restarted watchdog: the feed is cleared and read

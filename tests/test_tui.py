@@ -3,7 +3,14 @@ import asyncio
 from textual.widgets import DataTable, Input, RichLog, Static
 
 from jev_watchdog.attach import AttachError, ControlError
-from jev_watchdog.tui import WatchdogApp, header_text, thread_status, uptime
+from jev_watchdog.tui import (
+    WatchdogApp,
+    evidence_lines,
+    header_text,
+    thread_status,
+    timeline_text,
+    uptime,
+)
 
 MAIN = "aaaaaa/main"
 SUB = "aaaaaa/bbbbbb:Explore"
@@ -61,6 +68,22 @@ def note(seq: int, surface: str, message: str) -> dict:
             "message": message}  # fmt: skip
 
 
+def point(minute: int, exfil: float, folded: bool = True) -> dict:
+    return {"ts": f"2026-09-20T09:{minute:02d}:00", "evidence": {"exfil": exfil} if exfil else {},
+            "flagged": 0, "folded": folded}  # fmt: skip
+
+
+HISTORY = {
+    "limits": {"exfil": 0.2, "drift": 2.0},
+    "judges": {"jev": [point(1, 0.1), point(2, 0.1, folded=False), point(3, 0.4), point(9, 0)]},
+    "marks": [
+        {"ts": "2026-09-20T09:03:00", "kind": "quarantine", "judge": None},
+        {"ts": "2026-09-20T09:04:00", "kind": "trip", "judge": "claude"},
+        {"ts": "2026-09-20T09:09:00", "kind": "release", "judge": None},
+    ],
+}
+
+
 class FakeClient:
     """A watchdog as the dashboard sees it. `end()` breaks the stream; `boot` may then change."""
 
@@ -88,6 +111,18 @@ class FakeClient:
                 yield "record", record
             self._wake.clear()
             await self._wake.wait()
+
+    async def history(self, session_id: str, agent_id: str) -> dict:
+        self.calls.append(("history", session_id, agent_id))
+        return HISTORY
+
+    async def timeline(self, minutes: int, buckets: int, judge: str | None = None) -> dict:
+        self.calls.append(("timeline", minutes, judge))
+        cells = [None] * (buckets - 3) + [0.2, 0.7, 2.0]
+        rows = [{"label": MAIN, "session_id": "aaaaaa-session", "agent_id": "main",
+                 "cells": cells, "marks": {str(buckets - 1): "quarantine"}}]  # fmt: skip
+        return {"start": "2026-09-20T09:00:00", "end": "2026-09-20T10:00:00",
+                "bucket_s": 60, "judge": judge, "threads": rows}  # fmt: skip
 
     def publish(self, record: dict) -> None:
         self.records.append(record)
@@ -335,3 +370,57 @@ async def test_records_and_state_keep_arriving_while_a_question_is_open():
         assert len(feed_lines(app)) == 3 and app.is_running
         await pilot.press("escape")
         assert app.selected_label == SUB  # a new thread joins below; the cursor stays
+
+
+def test_evidence_lines_are_shares_of_the_limit_per_judged_tool_call():
+    data = evidence_lines(HISTORY, "jev")
+    assert data["x"] == [1, 2, 3]  # the verdict on a Stop moved nothing and is left out
+    assert data["lines"] == {"exfil": [0.5, 2.0, 0.0], "drift": [0.0, 0.0, 0.0]}
+    assert data["marks"] == [(2, "quarantine"), (3, "release")]  # claude's trip is not jev's
+    assert evidence_lines(HISTORY, "claude")["marks"][1] == (0, "trip")
+    assert evidence_lines(None, None) == {"x": [], "lines": {}, "marks": []}
+
+
+def test_timeline_text_is_a_row_of_cells_per_thread():
+    timeline = {
+        "start": "2026-09-20T09:00:00", "end": "2026-09-20T10:00:00", "bucket_s": 600,
+        "judge": "jev",
+        "threads": [{"label": "aaaaaa/[b]x\x1b", "session_id": "s", "agent_id": "main",
+                     "cells": [None, 0.05, 0.6, 2.0, 0.0, None],
+                     "marks": {"3": "quarantine", "4": "release"}}],
+    }  # fmt: skip
+    text = timeline_text(timeline, selected=None)
+    row = text.plain.splitlines()[2]
+    assert row.startswith("aaaaaa/[b]x�") and row.endswith("·▁▅QR·")
+    assert "one cell = 10m" in text.plain and "09:00" in text.plain and "10:00" in text.plain
+    empty = timeline_text(timeline | {"threads": []})
+    assert "nothing was judged in this window" in empty.plain
+
+
+async def test_the_number_keys_switch_the_view_and_the_charts_ask_for_their_data():
+    client = two_threads()
+    app = make_app(client)
+    async with app.run_test(size=(140, 40)) as pilot:
+        await until(pilot, lambda: app.selected_label == SUB, "selected")
+        await pilot.press("2")
+        asked = ("history", "aaaaaa-session", "bbbbbb")
+        await until(pilot, lambda: asked in client.calls, "history of the selected thread")
+        assert app.views.current == "evidence" and "evidence" in app.views.border_title
+        await pilot.press("up")
+        main = ("history", "aaaaaa-session", "main")
+        await until(pilot, lambda: main in client.calls, "history follows the selection")
+
+        await pilot.press("3")
+        await until(pilot, lambda: ("timeline", 60, "jev") in client.calls, "timeline asked")
+        shown = lambda: str(app.timeline_box.render())
+        await until(pilot, lambda: MAIN in shown() and "Q" in shown(), "timeline drawn")
+        await pilot.press("t")
+        await until(pilot, lambda: ("timeline", 15, "jev") in client.calls, "another window")
+        await pilot.press("j")
+        await until(pilot, lambda: ("timeline", 15, "claude") in client.calls, "another judge")
+
+        await pilot.press("4")
+        await until(pilot, lambda: app.views.current == "judges", "judges shown")
+        await pilot.press("1")
+        await until(pilot, lambda: len(feed_lines(app)) == 2, "the feed kept what it had")
+        assert app.is_running

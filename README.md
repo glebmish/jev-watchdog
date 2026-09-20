@@ -157,6 +157,24 @@ is the console's lines, the last 2000 of them on attaching. `x`, `r` and `c` do 
 `quarantine`, `release` and `context` do, on the selected thread. If the watchdog restarts, the
 dashboard reconnects and starts a fresh feed.
 
+The lower half is one of four views, on the keys `1` to `4`:
+
+- `1` **feed**: the lines above; `f` narrows them to the selected thread.
+- `2` **evidence**: the selected thread's CUSUM evidence per judged tool call, each rule as a
+  share of its limit, so the one line at 1.0 is where a rule quarantines. A red vertical line
+  is a quarantine, orange a trip that did not quarantine (a dry run, a judge that does not
+  decide), green a release. The evidence of a tripped thread stops moving until it is
+  released: the line goes flat, which is what `Decider.fold` does.
+- `3` **timeline**: every thread as a row of cells over the last hour (`t`: 15 m, 5 m, 6 h,
+  24 h), each cell the nearest any rule came to its limit in it, with `Q`, `R` and `T` where a
+  thread was quarantined, released or tripped. This is the view for "what happened while I was
+  not looking".
+- `4` **judges**: latency and lag of each judge's last 200 judgments. Lag above latency is
+  time spent queued behind earlier events: that judge is not keeping up.
+
+`j` changes whose view the evidence and the timeline show. The watchdog keeps the last 500
+verdicts per thread and judge for these charts, in memory like everything else.
+
 The dashboard talks to the watchdog over a unix socket,
 `~/.local/state/jev-watchdog/attach-<port>.sock`, mode 0600. What it reads there, `/state` and
 `/events`, is not served on the TCP port: it shows what every watched session is doing, and

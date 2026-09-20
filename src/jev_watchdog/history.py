@@ -111,7 +111,7 @@ class History:
         return {
             "start": _iso(start),
             "end": _iso(now),
-            "bucket_s": int(width.total_seconds()),
+            "bucket_s": round(width.total_seconds(), 1),
             "judge": judge,
             "threads": rows,
         }
