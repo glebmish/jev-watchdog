@@ -84,3 +84,13 @@ def test_missing_and_unruled_answers_are_skipped():
     decider = Decider(QUESTIONS)
     assert decider.fold(KEY, "jev", tool("t1"), verdict(serves_goal=0.99)) is None
     assert decider.evidence(KEY, "jev") == {}
+
+
+def test_evidence_is_compared_without_float_residue():
+    """0.7 - 0.6 twice is 0.19999999999999996: two 0.7s must trip exactly like one 0.8."""
+    rule = Question("exfil", "noul", "i", quarantine_ref=0.6, quarantine_limit=0.2)
+    decider = Decider([rule])
+    assert decider.fold(KEY, "j", tool("t1"), verdict(exfil=0.7)) is None
+    trip = decider.fold(KEY, "j", tool("t2"), verdict(exfil=0.7))
+    assert trip is not None and trip.evidence == 0.2
+    assert decider.evidence(KEY, "j") == {"exfil": 0.2}

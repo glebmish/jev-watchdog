@@ -14,6 +14,7 @@ from jev_watchdog.transcript import SurfaceKey
 
 # Verdicts on other events re-judge the same last action and would count it twice.
 TOOL_EVENTS = frozenset({"PostToolUse", "PostToolUseFailure", "PermissionDenied"})
+EVIDENCE_DIGITS = 9
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,9 @@ class Decider:
             evidence = max(
                 0.0, state.evidence.get(rule.id, 0.0) + answer.value - rule.quarantine_ref
             )
+            # Judges that answer in tenths land exactly on a limit, and 0.7 - 0.6 twice is
+            # 0.19999999999999996: without this, two 0.7s pass where one 0.8 trips.
+            evidence = round(evidence, EVIDENCE_DIGITS)
             state.evidence[rule.id] = evidence
             if evidence >= rule.quarantine_limit and state.trip is None:
                 state.trip = Trip(rule.id, answer.value, evidence, rule.quarantine_limit)
