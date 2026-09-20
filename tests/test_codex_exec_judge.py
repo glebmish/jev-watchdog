@@ -206,14 +206,16 @@ async def test_concurrent_judgments_are_capped():
         nonlocal active, peak
         active += 1
         peak = max(peak, active)
-        await asyncio.sleep(0.02)
+        await asyncio.sleep(0.1)
         active -= 1
         return 0, success(), ""
 
     judge = CodexExecJudge(max_concurrency=2, run_fn=run_fn)
     verdicts = await asyncio.gather(*(judge.judge(request()) for _ in range(6)))
     assert len(verdicts) == 6 and peak == 2
-    assert all(verdict.latency_ms < 60 for verdict in verdicts)
+    # Latency excludes the time queued behind the cap: counted in, the second round would show
+    # 200 ms or more. The 100 ms of slack is for a loaded machine.
+    assert all(verdict.latency_ms < 200 for verdict in verdicts)
     await judge.aclose()
 
 
