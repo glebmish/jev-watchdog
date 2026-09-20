@@ -320,3 +320,58 @@ def test_log_dir_places_the_timestamped_log(tmp_path, monkeypatch):
     assert main([*arguments, "--log-dir", str(tmp_path / "logs")]) == 0
     (log,) = (tmp_path / "logs").iterdir()
     assert log.suffix == ".jsonl"
+
+
+# --- attach and run --tui -----------------------------------------------------------------
+
+
+def test_the_dashboard_commands_parse():
+    assert build_parser().parse_args(["attach"]).port == DEFAULT_PORT
+    assert build_parser().parse_args(["attach", "--port", "9000"]).port == 9000
+    assert build_parser().parse_args(["run", "--tui"]).tui is True
+    assert build_parser().parse_args(["run"]).tui is False
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["replay", "x.jsonl", "--tui"])
+
+
+def test_attach_with_no_watchdog_says_so(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert main(["attach", "--port", "1"]) == 1
+    assert "no watchdog to attach to on port 1" in capsys.readouterr().err
+
+
+async def test_run_tui_serves_hooks_under_the_dashboard_until_q(socket_path, make_payload):
+    import aiohttp
+
+    from jev_watchdog.cli import _dashboard, _serve
+
+    registry, printer, port, attachment = serving(socket_path)
+    seen = {}
+
+    async def operator(pilot) -> None:
+        async with aiohttp.ClientSession() as session:
+            await session.post(f"http://127.0.0.1:{port}/hooks", json=make_payload("SessionStart"))
+        for _ in range(200):
+            if pilot.app.selected_label:
+                break
+            await pilot.pause(0.01)
+        seen["selected"] = pilot.app.selected_label
+        await pilot.press("q")
+
+    dashboard = _dashboard(attachment.socket, printer, headless=True, auto_pilot=operator)
+    assert await _serve(registry, printer, port, "banner", attachment, foreground=dashboard) == 0
+    assert seen == {"selected": "012345/main"}
+
+
+async def test_run_tui_stops_on_a_signal(socket_path):
+    import asyncio
+    import os
+    import signal
+
+    from jev_watchdog.cli import _dashboard, _serve
+
+    registry, printer, port, attachment = serving(socket_path)
+    asyncio.get_running_loop().call_later(0.3, os.kill, os.getpid(), signal.SIGTERM)
+    dashboard = _dashboard(attachment.socket, printer, headless=True)
+    served = _serve(registry, printer, port, "banner", attachment, foreground=dashboard)
+    assert await asyncio.wait_for(served, 5) == 0

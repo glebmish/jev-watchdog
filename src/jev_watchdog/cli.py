@@ -1,7 +1,8 @@
 """jev-watchdog: judge Claude Code agent threads on every hook event, quarantine on evidence.
 
-`run` listens in the foreground; `status`, `quarantine`, `release` and `context` talk to a
-running one.
+`run` listens in the foreground, with `--tui` under a dashboard; `install` makes it a service.
+`attach` opens the dashboard on a running one; `status`, `quarantine`, `release` and `context`
+talk to it.
 """
 
 import argparse
@@ -18,6 +19,7 @@ from aiohttp import web
 from rich.console import Console
 
 from jev_watchdog import control
+from jev_watchdog.attach import AttachClient, AttachError
 from jev_watchdog.feed import Feed
 from jev_watchdog.judge.base import Judge
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
@@ -55,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="how long a tool event may wait, in the background, for its tool call to reach "
         f"the transcript before it is judged anyway; 0 = never wait. Default: {TRANSCRIPT_WAIT_S}",
     )
+    run.add_argument(
+        "--tui",
+        action="store_true",
+        help="show the dashboard of `attach` instead of console lines; leaving it stops the "
+        "watchdog",
+    )
     _add_judging_options(run)
 
     replay = commands.add_parser(
@@ -64,6 +72,9 @@ def build_parser() -> argparse.ArgumentParser:
     replay.add_argument("cases", nargs="+", type=Path, metavar="CASE.jsonl")
     _add_judging_options(replay)
 
+    attach = commands.add_parser(
+        "attach", help="open the dashboard on a running watchdog; leaving it leaves that running"
+    )
     status = commands.add_parser("status", help="list quarantined threads of a running watchdog")
     quarantine = commands.add_parser("quarantine", help="quarantine a thread by hand")
     quarantine.add_argument("--reason", default="manual")
@@ -78,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
     context.add_argument("text", nargs="?", metavar="TEXT", help="applies to the whole session")
     context.add_argument("--clear", action="store_true", help="forget the session's context")
-    for command in (status, quarantine, release, context):
+    for command in (attach, status, quarantine, release, context):
         command.add_argument("--port", type=int, default=DEFAULT_PORT)
     return parser
 
@@ -154,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("context takes TEXT or --clear")
     if args.command in ("status", "quarantine", "release", "context"):
         return _control(args)
+    if args.command == "attach":
+        return asyncio.run(_attach(args.port))
     try:
         questions = load_packs(args.pack)
     except (OSError, PackError) as exc:
@@ -176,7 +189,9 @@ def main(argv: list[str] | None = None) -> int:
     # 0600: the log holds every prompt, tool input and tool output of the watched sessions.
     with open(log_path, "a", encoding="utf-8", opener=_private) as log_file:
         feed = Feed() if args.command == "run" else None
-        printer = Printer(Console(), log_file, feed=feed)
+        tui = args.command == "run" and args.tui
+        # The dashboard owns the terminal; what the console would say is in its feed.
+        printer = Printer(Console(quiet=tui), log_file, feed=feed)
         enforce = args.command == "run" and args.enforce
         wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
         registry = SurfaceRegistry(
@@ -197,7 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         info = DaemonInfo(feed.boot, os.getpid(), datetime.now(), args.port, str(log_path))
         attachment = Attachment(feed, info, socket_path(args.port))
-        return asyncio.run(_serve(registry, printer, args.port, banner, attachment))
+        foreground = _dashboard(attachment.socket, printer) if tui else None
+        return asyncio.run(_serve(registry, printer, args.port, banner, attachment, foreground))
 
 
 def _private(path: str, flags: int) -> int:
@@ -334,6 +350,44 @@ async def _serve(
         await _close(registry.judges)
         if listening:
             printer.global_summary(registry.stats, registry.summaries())
+
+
+def _dashboard(socket: Path, printer: Printer, **app_options):
+    """`run --tui`: the dashboard of `attach`, on this process's own socket."""
+    from jev_watchdog.tui import WatchdogApp  # textual is only needed by whoever looks
+
+    async def foreground(stop: asyncio.Event) -> None:
+        client = AttachClient(socket)
+        app = WatchdogApp(client, owns_watchdog=True)
+        showing = asyncio.create_task(app.run_async(**app_options))
+        stopped = asyncio.create_task(stop.wait())
+        try:
+            await asyncio.wait({showing, stopped}, return_when=asyncio.FIRST_COMPLETED)
+            if not showing.done():  # SIGTERM: the terminal has to be given back first
+                app.exit()
+            await showing
+        finally:
+            stopped.cancel()
+            await client.aclose()
+            printer.console = Console()  # for the closing summary
+
+    return foreground
+
+
+async def _attach(port: int) -> int:
+    from jev_watchdog.tui import WatchdogApp
+
+    client = AttachClient(socket_path(port))
+    try:
+        try:
+            await client.state()
+        except AttachError:
+            print(f"no watchdog to attach to on port {port}", file=sys.stderr)
+            return 1
+        await WatchdogApp(client).run_async()
+        return 0
+    finally:
+        await client.aclose()
 
 
 async def _offer(runner: web.AppRunner, path: Path) -> None:
