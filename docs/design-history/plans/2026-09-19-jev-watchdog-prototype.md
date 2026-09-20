@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14, uv, aiohttp, typesafe-sdk 0.7.0 (import `typesafe_sdk`), rich, pytest + pytest-asyncio + pytest-aiohttp, ruff.
 
-**Spec:** `docs/superpowers/specs/2026-09-19-jev-watchdog-prototype-design.md`
+**Spec:** `docs/design-history/specs/2026-09-19-jev-watchdog-prototype-design.md`
 
 ## Global Constraints
 
@@ -22,13 +22,13 @@
 - Judge or transcript failures are printed and counted; they never crash the process or a surface worker.
 - Run all commands from the repo root `/path/to/jev-watchdog`.
 - Commit messages end with:
-  ```
+  ```text
   Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
   ```
 
 ## File Structure
 
-```
+```text
 pyproject.toml                  project metadata, deps, pytest + ruff config
 pack.toml                       default question pack (8 questions)
 README.md                       what it is, how to run, privacy warning

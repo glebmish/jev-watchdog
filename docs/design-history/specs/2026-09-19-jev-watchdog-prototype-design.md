@@ -1,7 +1,7 @@
 # jev-watchdog prototype — design
 
 Date: 2026-09-19
-Status: approved design, pre-implementation
+Status: implemented 2026-09-19. Written before implementation (the parts marked as added later aside); where it differs from the top-level `README.md`, the README is authoritative.
 
 ## Purpose
 
@@ -68,7 +68,7 @@ Pack file is TOML, parsed with stdlib `tomllib`.
 
 ## Layout
 
-```
+```text
 pyproject.toml
 pack.toml                       default question pack
 plugin/
@@ -93,7 +93,7 @@ tests/
 
 ## CLI
 
-```
+```text
 jev-watchdog run [--port 8787] [--judge jev|fake] [--pack pack.toml]
                  [--key-file prototype-throwaway-key] [--log runs/<ts>.jsonl]
 ```
@@ -294,7 +294,7 @@ total input tokens, estimated cost at $0.042 / M tokens.
 
 Console (rich), one line per event and one per verdict:
 
-```
+```text
 15:02:11 a1b2c3/main        PostToolUse  Bash
 15:02:12 a1b2c3/main        verdict 612ms 4.1k tok  exfil=0.95! serves_goal=0.02! drift=2.9! activity=off_task!
 15:02:12 a1b2c3/def456:Explore  SubagentStart
@@ -368,6 +368,7 @@ Goal: evaluate alternatives to Jev on identical input and see the latency differ
   `--no-session-persistence`: no tools, no MCP connectors, no hooks/plugins (no recursion
   into the watchdog), no session files. Thinking disabled unless `--claude-thinking`.
   Out-of-range numbers are clamped; unknown choices are dropped. Default model
-  `claude-opus-5`; 120 s timeout; `max_turns=4`.
+  `claude-opus-5`; 120 s timeout; `max_turns=4` (later reduced to 1: `MAX_TURNS` in
+  `src/jev_watchdog/judge/claude_agent.py`).
 - Known consequence of identical input (no system prompt), accepted: answers collapse to
   0/1 and the transcript can steer the judge's first turn. With no tools it cannot act.
