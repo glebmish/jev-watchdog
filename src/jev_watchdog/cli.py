@@ -16,10 +16,11 @@ from aiohttp import web
 from rich.console import Console
 
 from jev_watchdog import control
+from jev_watchdog.judge.base import Judge
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
 from jev_watchdog.pack import PackError, Question, load_packs
 from jev_watchdog.printer import Printer
-from jev_watchdog.replay import load_case, run_cases
+from jev_watchdog.replay import ReplayError, load_case, run_cases
 from jev_watchdog.server import create_app
 from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
 
@@ -157,6 +158,10 @@ def main(argv: list[str] | None = None) -> int:
         thinking=args.claude_thinking,
     )
     judges = [make_judge(spec, config) for spec in args.judge]
+    names = [judge.name for judge in judges]
+    if len(set(names)) != len(names):  # e.g. jev and jev:jev-latest
+        asyncio.run(_close(judges))
+        raise SystemExit(f"--judge names the same judge more than once: {names}")
     log_path = args.log or Path("runs") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as log_file:
@@ -228,18 +233,26 @@ def _control(args: argparse.Namespace) -> int:
 async def _replay(
     paths: list[Path], registry: SurfaceRegistry, printer: Printer, questions: list[Question]
 ) -> int:
-    try:
-        cases = [load_case(path, questions) for path in paths]
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"cannot load case: {exc}") from exc
-    try:
+    try:  # from the start: a judge may hold a temp dir, and a case that fails to load exits
+        try:
+            cases = [load_case(path, questions) for path in paths]
+            names = [case.name for case in cases]
+            if repeated := sorted({name for name in names if names.count(name) > 1}):
+                # The name is the session id: same-named cases would be judged as one thread.
+                raise ReplayError(f"more than one case is named {', '.join(map(repr, repeated))}")
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"cannot load case: {exc}") from exc
         await run_cases(cases, registry, printer)
     finally:
         await registry.shutdown()
-        for judge in registry.judges:
-            await judge.aclose()
+        await _close(registry.judges)
     printer.global_summary(registry.stats, {})
     return 0
+
+
+async def _close(judges: list[Judge]) -> None:
+    for judge in judges:
+        await judge.aclose()
 
 
 async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner: str) -> int:
@@ -263,8 +276,7 @@ async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner:
     finally:
         await registry.shutdown()
         await runner.cleanup()
-        for judge in registry.judges:
-            await judge.aclose()
+        await _close(registry.judges)
         if listening:
             printer.global_summary(registry.stats, registry.summaries())
 

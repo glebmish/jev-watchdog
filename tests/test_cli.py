@@ -146,3 +146,47 @@ def test_context_command_needs_text_or_clear(capsys):
         main(["context", "1d8e7c"])
     with pytest.raises(SystemExit):
         main(["context", "1d8e7c", "text", "--clear"])
+
+
+def test_two_specs_of_the_same_judge_exit_with_a_message(tmp_path):
+    key_file = tmp_path / "key"
+    key_file.write_text("apikey_not_real\n")
+    with pytest.raises(SystemExit) as err:
+        main(
+            ["run", "--judge", "jev", "--judge", "jev:jev-latest", "--key-file", str(key_file),
+             "--log", str(tmp_path / "run.jsonl")]
+        )  # fmt: skip
+    assert "same judge" in str(err.value) and "jev" in str(err.value)
+
+
+def replay(tmp_path, *cases: Path) -> int:
+    repo = Path(__file__).resolve().parent.parent
+    return main(
+        ["replay", *map(str, cases), "--judge", "fake", "--pack", str(repo / "pack.toml"),
+         "--log", str(tmp_path / "run.jsonl")]
+    )  # fmt: skip
+
+
+def test_replay_rejects_two_cases_of_the_same_name(tmp_path):
+    """The name is the session id: the second case would continue the first one's thread."""
+    for folder in ("a", "b"):
+        (tmp_path / folder).mkdir()
+        line = '{"type":"user","message":{"role":"user","content":"hi"}}\n'
+        (tmp_path / folder / "same.jsonl").write_text(line)
+    with pytest.raises(SystemExit) as err:
+        replay(tmp_path, tmp_path / "a" / "same.jsonl", tmp_path / "b" / "same.jsonl")
+    assert "cannot load case" in str(err.value) and "'same'" in str(err.value)
+
+
+def test_replay_closes_its_judges_when_a_case_does_not_load(tmp_path, monkeypatch):
+    from jev_watchdog.judge.fake import FakeJudge
+
+    closed = []
+
+    async def aclose(self):
+        closed.append(self.name)
+
+    monkeypatch.setattr(FakeJudge, "aclose", aclose)
+    with pytest.raises(SystemExit):
+        replay(tmp_path, tmp_path / "absent.jsonl")
+    assert closed == ["fake"]  # claude and codex judges keep a temp dir until closed
