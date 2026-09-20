@@ -368,6 +368,7 @@ Goal: evaluate alternatives to Jev on identical input and see the latency differ
   `--no-session-persistence`: no tools, no MCP connectors, no hooks/plugins (no recursion
   into the watchdog), no session files. Thinking disabled unless `--claude-thinking`.
   Out-of-range numbers are clamped; unknown choices are dropped. Default model
-  `claude-opus-5`; 120 s timeout; `max_turns=4`.
+  `claude-opus-5`; 120 s timeout; `max_turns=4` (later reduced to 1: `MAX_TURNS` in
+  `src/jev_watchdog/judge/claude_agent.py`).
 - Known consequence of identical input (no system prompt), accepted: answers collapse to
   0/1 and the transcript can steer the judge's first turn. With no tools it cannot act.
