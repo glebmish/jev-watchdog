@@ -230,3 +230,93 @@ def test_the_api_key_goes_to_the_jev_judge_and_out_of_the_environment(tmp_path, 
     argv = ["replay", str(tiny_case(tmp_path)), "--judge", "jev", "--pack", str(repo / "pack.toml")]
     assert main([*argv, "--log", str(tmp_path / "run.jsonl")]) == 0
     assert seen == [("apikey_env", None)]
+
+
+# --- the attach socket --------------------------------------------------------------------
+
+
+def serving(socket_path, log_path=None):
+    import io
+    import os
+    import socket
+    from datetime import datetime
+
+    from rich.console import Console
+
+    from jev_watchdog.cli import Attachment
+    from jev_watchdog.feed import Feed
+    from jev_watchdog.judge.fake import FakeJudge
+    from jev_watchdog.printer import Printer
+    from jev_watchdog.state import DaemonInfo
+    from jev_watchdog.surfaces import SurfaceRegistry
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    feed = Feed()
+    printer = Printer(Console(file=io.StringIO(), width=200), feed=feed)
+    registry = SurfaceRegistry([FakeJudge()], [], printer)
+    info = DaemonInfo(feed.boot, os.getpid(), datetime.now(), port, log_path)
+    return registry, printer, port, Attachment(feed, info, socket_path)
+
+
+async def test_the_socket_serves_state_and_the_port_does_not(socket_path):
+    import stat
+
+    import aiohttp
+
+    from jev_watchdog.cli import _serve
+
+    registry, printer, port, attachment = serving(socket_path)
+    socket_path.write_text("stale")  # left by a watchdog that was killed
+    seen = {}
+
+    async def look(stop) -> None:
+        seen["mode"] = stat.S_IMODE(socket_path.stat().st_mode)
+        connector = aiohttp.UnixConnector(path=str(socket_path))
+        async with aiohttp.ClientSession(connector=connector) as session:
+            seen["socket"] = (await session.get("http://localhost/state")).status
+            seen["boot"] = (await (await session.get("http://localhost/state")).json())["boot"]
+        async with aiohttp.ClientSession() as session:
+            seen["tcp"] = (await session.get(f"http://127.0.0.1:{port}/state")).status
+            seen["tcp control"] = (await session.get(f"http://127.0.0.1:{port}/quarantine")).status
+
+    assert await _serve(registry, printer, port, "banner", attachment, foreground=look) == 0
+    assert seen == {
+        "mode": 0o600, "socket": 200, "boot": attachment.feed.boot, "tcp": 404, "tcp control": 200,
+    }  # fmt: skip
+    assert not socket_path.exists()
+
+
+async def test_without_a_socket_run_carries_on_but_a_dashboard_cannot(socket_path, capsys):
+    from jev_watchdog.cli import _serve
+
+    registry, printer, port, attachment = serving(socket_path.parent / ("x" * 120))  # too long
+    ran = []
+
+    async def look(stop) -> None:
+        ran.append(True)
+
+    assert await _serve(registry, printer, port, "banner", attachment, foreground=look) == 1
+    assert ran == [] and "attach unavailable" in capsys.readouterr().err
+
+    async def stop_at_once(registry, printer, port, attachment):
+        import asyncio
+        import os
+        import signal
+
+        asyncio.get_running_loop().call_later(0.05, os.kill, os.getpid(), signal.SIGTERM)
+        return await _serve(registry, printer, port, "banner", attachment)
+
+    assert await stop_at_once(registry, printer, port, attachment) == 0
+    assert "attach unavailable" in capsys.readouterr().err
+
+
+def test_log_dir_places_the_timestamped_log(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    case = tiny_case(tmp_path)
+    pack = Path(__file__).resolve().parent.parent / "pack.toml"
+    arguments = ["replay", str(case), "--judge", "fake", "--pack", str(pack)]
+    assert main([*arguments, "--log-dir", str(tmp_path / "logs")]) == 0
+    (log,) = (tmp_path / "logs").iterdir()
+    assert log.suffix == ".jsonl"

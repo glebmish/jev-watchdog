@@ -9,7 +9,8 @@ import asyncio
 import os
 import signal
 import sys
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -17,12 +18,15 @@ from aiohttp import web
 from rich.console import Console
 
 from jev_watchdog import control
+from jev_watchdog.feed import Feed
 from jev_watchdog.judge.base import Judge
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
 from jev_watchdog.pack import PackError, Question, load_packs
+from jev_watchdog.paths import private_dir, socket_path
 from jev_watchdog.printer import Printer, printable
 from jev_watchdog.replay import ReplayError, load_case, run_cases
 from jev_watchdog.server import create_app
+from jev_watchdog.state import DaemonInfo
 from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
 
 DEFAULT_PORT = 8787
@@ -113,7 +117,10 @@ def _add_judging_options(command: argparse.ArgumentParser) -> None:
     )
     command.add_argument("--key-file", type=Path, default=DEFAULT_KEY_FILE)
     command.add_argument(
-        "--log", type=Path, default=None, help="run log path (default runs/<timestamp>.jsonl)"
+        "--log", type=Path, default=None, help="run log path (default <log dir>/<timestamp>.jsonl)"
+    )
+    command.add_argument(
+        "--log-dir", type=Path, default=Path("runs"), help="where a run log goes. Default: runs"
     )
 
 
@@ -164,11 +171,12 @@ def main(argv: list[str] | None = None) -> int:
     if len(set(names)) != len(names):  # e.g. jev and jev:jev-latest
         asyncio.run(_close(judges))
         raise SystemExit(f"--judge names the same judge more than once: {names}")
-    log_path = args.log or Path("runs") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+    log_path = args.log or args.log_dir / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # 0600: the log holds every prompt, tool input and tool output of the watched sessions.
     with open(log_path, "a", encoding="utf-8", opener=_private) as log_file:
-        printer = Printer(Console(), log_file)
+        feed = Feed() if args.command == "run" else None
+        printer = Printer(Console(), log_file, feed=feed)
         enforce = args.command == "run" and args.enforce
         wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
         registry = SurfaceRegistry(
@@ -187,7 +195,9 @@ def main(argv: list[str] | None = None) -> int:
             f" · {len(questions)} questions · {_mode(registry)} · log={log_path}"
             " · Ctrl-C to stop"
         )
-        return asyncio.run(_serve(registry, printer, args.port, banner))
+        info = DaemonInfo(feed.boot, os.getpid(), datetime.now(), args.port, str(log_path))
+        attachment = Attachment(feed, info, socket_path(args.port))
+        return asyncio.run(_serve(registry, printer, args.port, banner, attachment))
 
 
 def _private(path: str, flags: int) -> int:
@@ -264,9 +274,27 @@ async def _close(judges: list[Judge]) -> None:
         await judge.aclose()
 
 
-async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner: str) -> int:
+@dataclass(frozen=True)
+class Attachment:
+    """What `attach` needs of a running watchdog, and the socket it is offered on."""
+
+    feed: Feed
+    info: DaemonInfo
+    socket: Path
+
+
+async def _serve(
+    registry: SurfaceRegistry,
+    printer: Printer,
+    port: int,
+    banner: str,
+    attachment: Attachment | None = None,
+    foreground: Callable[[asyncio.Event], Awaitable[None]] | None = None,
+) -> int:
+    """Listen until a signal, or for as long as `foreground` (the dashboard) runs."""
     runner = web.AppRunner(create_app(registry), access_log=None)
     await runner.setup()
+    private = None  # the same app plus /state and /events, on the socket only
     listening = False
     try:
         try:
@@ -275,19 +303,45 @@ async def _serve(registry: SurfaceRegistry, printer: Printer, port: int, banner:
             print(f"cannot listen on {HOST}:{port}: {exc}", file=sys.stderr)
             return 1
         listening = True
+        if attachment is not None:
+            private = web.AppRunner(
+                create_app(registry, attachment.feed, attachment.info), access_log=None
+            )
+            await private.setup()
+            try:
+                await _offer(private, attachment.socket)
+            except OSError as exc:
+                print(f"attach unavailable: {attachment.socket}: {exc}", file=sys.stderr)
+                await private.cleanup()
+                private = None
+        if foreground is not None and private is None:
+            return 1  # a dashboard with nothing to read
         printer.banner(banner)
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for signum in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(signum, stop.set)
-        await stop.wait()
+        await (stop.wait() if foreground is None else foreground(stop))
         return 0
     finally:
+        if attachment is not None:
+            attachment.feed.close()  # or the open /events streams hold the cleanup up
+        if private is not None:
+            await private.cleanup()
+            attachment.socket.unlink(missing_ok=True)
         await registry.shutdown()
         await runner.cleanup()
         await _close(registry.judges)
         if listening:
             printer.global_summary(registry.stats, registry.summaries())
+
+
+async def _offer(runner: web.AppRunner, path: Path) -> None:
+    # This process holds the port, so a file at the port's socket path is a dead watchdog's.
+    private_dir(path.parent)
+    path.unlink(missing_ok=True)
+    await web.UnixSite(runner, str(path)).start()
+    path.chmod(0o600)
 
 
 if __name__ == "__main__":
