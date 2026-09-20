@@ -1,7 +1,9 @@
 import asyncio
 import io
+import urllib.request
 
 import pytest
+from aiohttp import web
 from conftest import SESSION_ID
 from rich.console import Console
 
@@ -58,3 +60,32 @@ async def test_context_against_a_running_server(aiohttp_server, registry_with_se
     assert registry_with_session.contexts == {}
     assert await run("context", "nope", "x") == 1
     assert "nope" in capsys.readouterr().err
+
+
+async def test_something_else_on_the_port_is_named_not_a_traceback(aiohttp_server, capsys):
+    async def hello(request):
+        return web.Response(text="hello")
+
+    app = web.Application()
+    app.router.add_get("/quarantine", hello)
+    server = await aiohttp_server(app)
+
+    def run(*argv):
+        return asyncio.to_thread(main, [*argv, "--port", str(server.port)])
+
+    assert await run("status") == 1  # 200, but not JSON
+    assert f"port {server.port} is not a jev-watchdog" in capsys.readouterr().err
+    assert await run("release", "x") == 1  # aiohttp's plain-text 404
+    assert f"port {server.port} is not a jev-watchdog" in capsys.readouterr().err
+
+
+async def test_a_proxy_in_the_environment_is_not_asked_for_localhost(
+    aiohttp_server, registry_with_session, capsys, monkeypatch
+):
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
+    monkeypatch.setattr(urllib.request, "_opener", None)  # urlopen reads the proxies only once
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    server = await aiohttp_server(create_app(registry_with_session))
+    assert await asyncio.to_thread(main, ["status", "--port", str(server.port)]) == 0
+    assert "nothing is quarantined" in capsys.readouterr().out

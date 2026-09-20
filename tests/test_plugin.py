@@ -49,8 +49,11 @@ def test_session_start_is_a_silent_async_command_hook():
 
 @pytest.mark.skipif(shutil.which("curl") is None, reason="needs curl")
 async def test_the_session_start_command_is_a_client_the_server_accepts(
-    aiohttp_server, make_payload
+    aiohttp_server, make_payload, monkeypatch
 ):
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")  # curl must not ask it for localhost
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
     registry = SurfaceRegistry([FakeJudge()], [], Printer(Console(file=io.StringIO())))
     server = await aiohttp_server(create_app(registry))
     command = handlers()["SessionStart"]["command"].replace(f":{DEFAULT_PORT}/", f":{server.port}/")

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "curl -s -o /dev/null -m 2 -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/hooks || true",
+            "command": "curl -s -o /dev/null -m 2 --noproxy '*' -X POST -H 'Content-Type: application/json' --data-binary @- http://127.0.0.1:8787/hooks || true",
             "async": true
           }
         ]

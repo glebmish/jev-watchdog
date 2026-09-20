@@ -205,6 +205,9 @@ def _control(args: argparse.Namespace) -> int:
     except control.Unreachable:
         print(f"no watchdog listening on port {args.port}", file=sys.stderr)
         return 1
+    except control.NotAWatchdog:
+        print(f"whatever listens on port {args.port} is not a jev-watchdog", file=sys.stderr)
+        return 1
     if status != 200:
         print(body.get("error", f"HTTP {status}"), file=sys.stderr)
         return 1
