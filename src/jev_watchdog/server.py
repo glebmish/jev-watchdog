@@ -17,6 +17,10 @@ from jev_watchdog.quarantine import Quarantine
 from jev_watchdog.surfaces import SurfaceRegistry, TargetError
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
+# A hook carries the whole tool input and output (a large Write, a long Bash log). Over
+# aiohttp's 1 MiB default the 413 is a non-2xx, which Claude Code does not block on: the
+# large tool calls of a quarantined thread would go through, and never be judged or logged.
+MAX_BODY_BYTES = 64 * 2**20
 
 
 def create_app(registry: SurfaceRegistry) -> web.Application:
@@ -24,7 +28,10 @@ def create_app(registry: SurfaceRegistry) -> web.Application:
     async def local_clients_only(request: web.Request, handler) -> web.StreamResponse:
         refusal = _refusal(request)
         if refusal is None:
-            return await handler(request)
+            try:
+                return await handler(request)
+            except web.HTTPRequestEntityTooLarge:
+                refusal = 413, f"body over {MAX_BODY_BYTES} bytes"
         status, error = refusal
         registry.bad_payload(f"refused {request.method} {request.path}: {error}")
         return web.json_response({"error": error}, status=status)
@@ -82,7 +89,7 @@ def create_app(registry: SurfaceRegistry) -> web.Application:
             return web.json_response({"error": exc.message}, status=exc.status)
         return web.json_response({"target": label, "context": body["text"].strip()})
 
-    app = web.Application(middlewares=[local_clients_only])
+    app = web.Application(middlewares=[local_clients_only], client_max_size=MAX_BODY_BYTES)
     app.router.add_post("/hooks", hooks)
     app.router.add_get("/quarantine", listing)
     app.router.add_post(

@@ -181,3 +181,25 @@ async def test_a_refused_request_is_reported(aiohttp_client, registry):
     await client.post("/release", json={"target": "x"}, headers={"Origin": "https://evil.example"})
     assert registry.stats.errors == {"payload": 1}
     assert "refused POST /release" in registry.printer.console.file.getvalue()
+
+
+async def test_a_large_tool_call_of_a_quarantined_thread_is_still_denied(
+    aiohttp_client, registry, make_payload
+):
+    """A Write of a few MiB: a 413 would be a non-2xx, which Claude Code does not block on."""
+    client = await aiohttp_client(create_app(registry))
+    await client.post("/hooks", json=make_payload("SessionStart"))
+    await client.post("/quarantine", json={"target": SESSION_ID[:6]})
+    payload = make_payload("PreToolUse", tool_name="Write", tool_input={"content": "x" * 2**21})
+    response = await client.post("/hooks", json=payload)
+    assert response.status == 200
+    assert (await response.json())["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+
+async def test_a_body_over_the_limit_is_reported(aiohttp_client, registry, monkeypatch):
+    monkeypatch.setattr("jev_watchdog.server.MAX_BODY_BYTES", 1024)
+    client = await aiohttp_client(create_app(registry))
+    response = await client.post("/hooks", json={"padding": "x" * 2048})
+    assert response.status == 413
+    assert registry.stats.errors == {"payload": 1}
+    assert "body over 1024 bytes" in registry.printer.console.file.getvalue()
