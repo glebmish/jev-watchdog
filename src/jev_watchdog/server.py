@@ -45,7 +45,7 @@ def create_app(registry: SurfaceRegistry) -> web.Application:
         else:
             if isinstance(payload, dict):
                 try:
-                    body = registry.handle(payload)
+                    body = await registry.handle(payload)
                 except Exception as exc:  # noqa: BLE001 - a bug here must not fail the agent's hook
                     registry.bad_payload(f"handler failed: {exc!r}")
             else:

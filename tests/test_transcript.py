@@ -1,4 +1,8 @@
+import os
+import threading
 from pathlib import Path
+
+import pytest
 
 from jev_watchdog.transcript import (
     MAIN,
@@ -93,3 +97,37 @@ def test_has_tool_result_finds_the_result_block_of_a_tool_use():
     assert has_tool_result([use, result], "t1")
     assert not has_tool_result([use, result], "t2")
     assert not has_tool_result(['{"type":"user","message":"t1 mentioned in text"}', "{bad"], "t1")
+
+
+def test_a_fifo_is_refused_rather_than_waited_on(tmp_path):
+    fifo = tmp_path / "pipe.jsonl"
+    os.mkfifo(fifo)
+    raised = []
+
+    def read():
+        try:
+            read_lines(fifo)
+        except OSError as exc:
+            raised.append(str(exc))
+
+    thread = threading.Thread(target=read, daemon=True)
+    thread.start()
+    thread.join(1)
+    if thread.is_alive():  # stuck in open(): a writer lets it go
+        os.close(os.open(fifo, os.O_WRONLY | os.O_NONBLOCK))
+    assert len(raised) == 1 and "not a regular file" in raised[0]
+
+
+def test_a_transcript_over_the_cap_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr("jev_watchdog.transcript.MAX_TRANSCRIPT_BYTES", 64)
+    path = tmp_path / "big.jsonl"
+    path.write_text('{"type":"user","message":"' + "x" * 64 + '"}\n')
+    with pytest.raises(OSError, match="over 64 bytes"):
+        read_lines(path)
+
+
+def test_a_character_cut_by_the_writer_costs_only_its_line(tmp_path):
+    path = tmp_path / "cut.jsonl"
+    whole = '{"type":"user","message":"déjà vu"}'
+    path.write_bytes(whole.encode() + b'\n{"type":"assistant","message":"caf\xc3')
+    assert conversation_lines(read_lines(path)) == [whole]

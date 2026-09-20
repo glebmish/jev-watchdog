@@ -14,10 +14,10 @@ from jev_watchdog.surfaces import SurfaceRegistry
 
 
 @pytest.fixture
-def registry_with_session(make_payload):
+async def registry_with_session(make_payload):
     console = Console(file=io.StringIO(), width=200, color_system=None)
     registry = SurfaceRegistry([FakeJudge()], [Question("exfil", "noul", "i")], Printer(console))
-    registry.handle(make_payload("SessionStart"))
+    await registry.handle(make_payload("SessionStart"))
     return registry
 
 

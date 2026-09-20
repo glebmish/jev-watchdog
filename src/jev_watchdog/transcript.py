@@ -1,11 +1,20 @@
 """Surface identity and transcript access for Claude Code hook payloads."""
 
 import json
+import os
+import stat
 from pathlib import Path
 from typing import NamedTuple
 
 MAIN = "main"
 CONVERSATION_TYPES = frozenset({"user", "assistant"})
+# The path comes from the hook payload, so it is whatever the agent's side says it is.
+# Far above any real transcript; it only keeps /dev/zero or a runaway file out of memory.
+MAX_TRANSCRIPT_BYTES = 256 * 2**20
+
+
+class TranscriptError(OSError):
+    """A transcript path that will not be read: not a regular file, or too large."""
 
 
 class SurfaceKey(NamedTuple):
@@ -40,7 +49,16 @@ def resolve_transcript_path(payload: dict) -> Path:
 
 def read_lines(path: Path) -> list[str]:
     """Return the transcript's JSONL lines unmodified, skipping blank lines."""
-    text = path.read_text(encoding="utf-8")
+    # O_NONBLOCK: opening a FIFO nobody writes to would otherwise never return.
+    with open(os.open(path, os.O_RDONLY | os.O_NONBLOCK), "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
+            raise TranscriptError(f"{path} is not a regular file")
+        data = fh.read(MAX_TRANSCRIPT_BYTES + 1)
+    if len(data) > MAX_TRANSCRIPT_BYTES:
+        raise TranscriptError(f"{path} is over {MAX_TRANSCRIPT_BYTES} bytes")
+    # Claude Code may be mid-write: a character cut in half spoils its own line, which is
+    # not valid JSON yet and is dropped anyway, not the whole read.
+    text = data.decode("utf-8", errors="replace")
     return [line for line in text.split("\n") if line.strip()]
 
 

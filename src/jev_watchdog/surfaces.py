@@ -90,6 +90,10 @@ class Surface:
     # Events waiting for the transcript, dispatched in arrival order by one task.
     intake: asyncio.Queue[_Pending] = field(default_factory=asyncio.Queue)
     intake_worker: asyncio.Task | None = None
+    # Held from a hook's arrival until it is admitted. The transcript is read in a thread,
+    # and asyncio locks are fair, so a slow read cannot let a later event of the thread
+    # overtake an earlier one.
+    arrival: asyncio.Lock = field(default_factory=asyncio.Lock)
     backlog: int = 0
     label_override: str | None = None  # replayed cases are named, not truncated ids
 
@@ -132,10 +136,11 @@ class SurfaceRegistry:
         # Optional observer: on_verdict(surface, judge_name, job, verdict, flagged_ids, tripped)
         self.on_verdict: Callable[[Surface, str, Job, Verdict, set[str], bool], None] | None = None
 
-    def handle(self, payload: dict) -> dict | None:
+    async def handle(self, payload: dict) -> dict | None:
         """Route one hook payload and return the JSON to answer it with, if any.
 
-        Never raises; must run inside the event loop.
+        Never raises. A gate event is answered without awaiting anything; a judging event
+        returns once the transcript is snapshotted.
         """
         received_at = time.monotonic()
         event = payload.get("hook_event_name")
@@ -155,20 +160,21 @@ class SurfaceRegistry:
         self.printer.event(surface.label, payload)
 
         if event == "SessionEnd":
-            for other in self.surfaces.values():
-                if other.key.session_id == surface.key.session_id:
+            session = surface.key.session_id
+            for other in [s for s in self.surfaces.values() if s.key.session_id == session]:
+                async with other.arrival:
                     self._admit(other, _Pending(None, received_at, None))
         elif event in JUDGING_EVENTS:
-            lines = self._snapshot(surface)
-            if lines is not None:
-                behind = self._awaited(payload) and not has_tool_result(
-                    lines, payload["tool_use_id"]
-                )
-                context = self.contexts.get(surface.key.session_id, self.default_context)
-                self._admit(
-                    surface, _Pending(payload, received_at, None if behind else lines, context)
-                )
+            async with surface.arrival:
+                await self._receive(surface, payload, received_at)
         return None
+
+    async def _receive(self, surface: Surface, payload: dict, received_at: float) -> None:
+        lines = await self._snapshot(surface)
+        if lines is not None:
+            behind = self._awaited(payload) and not has_tool_result(lines, payload["tool_use_id"])
+            context = self.contexts.get(surface.key.session_id, self.default_context)
+            self._admit(surface, _Pending(payload, received_at, None if behind else lines, context))
 
     def set_context(self, target: str, text: str) -> str:
         """Set (or, with blank text, clear) the context of the target's whole session."""
@@ -223,10 +229,13 @@ class SurfaceRegistry:
             worker.cancel()
         await asyncio.gather(*workers, return_exceptions=True)
 
-    def _snapshot(self, surface: Surface) -> list[str] | None:
+    async def _snapshot(self, surface: Surface) -> list[str] | None:
         """The thread's conversation right now; None (and reported) if it cannot be read."""
+        path = surface.transcript_path
         try:
-            return conversation_lines(read_lines(surface.transcript_path))
+            # In a thread: the event loop also answers PreToolUse, and a large or slow file
+            # must not make the deny of a quarantined thread time out.
+            return await asyncio.to_thread(lambda: conversation_lines(read_lines(path)))
         except FileNotFoundError:
             return []  # session start: the hook fires before the transcript exists
         except OSError as exc:
@@ -271,7 +280,7 @@ class SurfaceRegistry:
     async def _caught_up(self, surface: Surface, tool_use_id: str) -> list[str] | None:
         deadline = time.monotonic() + self.transcript_wait_s
         while True:
-            lines = self._snapshot(surface)
+            lines = await self._snapshot(surface)
             if lines is None or has_tool_result(lines, tool_use_id):
                 return lines
             if time.monotonic() >= deadline:

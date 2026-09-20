@@ -176,10 +176,10 @@ async def run_cases(
             else:
                 registry.contexts[case.name] = case.context
             for number, step in enumerate(case.steps, start=1):
-                # handle() snapshots the file synchronously, so the next prefix can
+                # handle() returns with the file snapshotted, so the next prefix can
                 # overwrite it while this one is still queued.
                 transcript.write_text("\n".join(case.lines[: step.end]) + "\n", encoding="utf-8")
-                registry.handle(
+                await registry.handle(
                     {
                         "session_id": case.name,
                         "surface_label": f"{case.name}/main",
