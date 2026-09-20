@@ -26,6 +26,9 @@ def handlers() -> dict[str, dict]:
 def test_plugin_manifest():
     manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
     assert manifest["name"] == "jev-watchdog-hooks"
+    # The PreToolUse hook can reject tool calls: whoever installs this must not read otherwise.
+    assert "PreToolUse" in manifest["description"]
+    assert "observe-only" not in manifest["description"].lower()
 
 
 def test_hooks_cover_exactly_the_handled_events():
