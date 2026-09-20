@@ -1,6 +1,7 @@
 """jev-watchdog: judge Claude Code agent threads on every hook event, quarantine on evidence.
 
-`run` listens in the foreground; `status`, `quarantine` and `release` talk to a running one.
+`run` listens in the foreground; `status`, `quarantine`, `release` and `context` talk to a
+running one.
 """
 
 import argparse
