@@ -190,3 +190,43 @@ def test_replay_closes_its_judges_when_a_case_does_not_load(tmp_path, monkeypatc
     with pytest.raises(SystemExit):
         replay(tmp_path, tmp_path / "absent.jsonl")
     assert closed == ["fake"]  # claude and codex judges keep a temp dir until closed
+
+
+def tiny_case(tmp_path) -> Path:
+    case = tmp_path / "tiny.jsonl"
+    case.write_text('{"type":"user","message":{"role":"user","content":"fix the test"}}\n')
+    return case
+
+
+def test_the_run_log_is_private_to_the_operator(tmp_path):
+    """It holds every prompt, tool input and tool output of the watched sessions."""
+    import os
+    import stat
+
+    before = os.umask(0o022)
+    try:
+        assert replay(tmp_path, tiny_case(tmp_path)) == 0
+    finally:
+        os.umask(before)
+    assert stat.S_IMODE((tmp_path / "run.jsonl").stat().st_mode) == 0o600
+
+
+def test_the_api_key_goes_to_the_jev_judge_and_out_of_the_environment(tmp_path, monkeypatch):
+    """claude and codex judges start child processes, which inherit the environment."""
+    import os
+
+    from jev_watchdog import cli
+    from jev_watchdog.judge.fake import FakeJudge
+
+    seen = []
+
+    def make_judge(spec, config):
+        seen.append((config.api_key, os.environ.get("TYPESAFE_API_KEY")))
+        return FakeJudge()
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "apikey_env")
+    monkeypatch.setattr(cli, "make_judge", make_judge)
+    repo = Path(__file__).resolve().parent.parent
+    argv = ["replay", str(tiny_case(tmp_path)), "--judge", "jev", "--pack", str(repo / "pack.toml")]
+    assert main([*argv, "--log", str(tmp_path / "run.jsonl")]) == 0
+    assert seen == [("apikey_env", None)]

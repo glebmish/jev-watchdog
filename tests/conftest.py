@@ -1,3 +1,5 @@
+import os
+
 import pytest
 
 from jev_watchdog.judge.base import Answer, Verdict
@@ -11,6 +13,13 @@ BOOKKEEPING_LINES = [
     '{"type":"queue-operation","operation":"enqueue"}',
     '{"type":"attachment","attachment":{"type":"skill_listing","content":"huge"}}',
 ]
+
+
+@pytest.fixture(autouse=True)
+def keep_the_api_key(monkeypatch):
+    """main() takes TYPESAFE_API_KEY out of the environment; live tests run later need it."""
+    if "TYPESAFE_API_KEY" in os.environ:
+        monkeypatch.setenv("TYPESAFE_API_KEY", os.environ["TYPESAFE_API_KEY"])
 
 
 @pytest.fixture

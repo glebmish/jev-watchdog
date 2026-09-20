@@ -153,10 +153,11 @@ def main(argv: list[str] | None = None) -> int:
     if len(set(args.judge)) != len(args.judge):
         raise SystemExit(f"--judge given more than once with the same value: {args.judge}")
     needs_key = any(backend_of(spec) == "jev" for spec in args.judge)
-    config = JudgeConfig(
-        api_key=resolve_api_key(os.environ, args.key_file) if needs_key else None,
-        thinking=args.claude_thinking,
-    )
+    api_key = resolve_api_key(os.environ, args.key_file) if needs_key else None
+    # The Jev judge is handed the key. The claude and codex judges start child processes,
+    # which would inherit it from the environment, and they run on the agent's transcripts.
+    os.environ.pop("TYPESAFE_API_KEY", None)
+    config = JudgeConfig(api_key=api_key, thinking=args.claude_thinking)
     judges = [make_judge(spec, config) for spec in args.judge]
     names = [judge.name for judge in judges]
     if len(set(names)) != len(names):  # e.g. jev and jev:jev-latest
@@ -164,7 +165,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit(f"--judge names the same judge more than once: {names}")
     log_path = args.log or Path("runs") / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("a", encoding="utf-8") as log_file:
+    # 0600: the log holds every prompt, tool input and tool output of the watched sessions.
+    with open(log_path, "a", encoding="utf-8", opener=_private) as log_file:
         printer = Printer(Console(), log_file)
         enforce = args.command == "run" and args.enforce
         wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
@@ -185,6 +187,10 @@ def main(argv: list[str] | None = None) -> int:
             " · Ctrl-C to stop"
         )
         return asyncio.run(_serve(registry, printer, args.port, banner))
+
+
+def _private(path: str, flags: int) -> int:
+    return os.open(path, flags, 0o600)
 
 
 def _mode(registry: SurfaceRegistry) -> str:
