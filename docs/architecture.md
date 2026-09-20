@@ -1,13 +1,15 @@
 # Architecture
 
-How a hook event becomes a verdict, and a verdict a quarantine. As of the code on 2026-09-20.
+How a hook event becomes a verdict, and a verdict a quarantine. As of the code on 2026-09-20, the service and dashboard included.
 Modules are under `src/jev_watchdog/`; names are given so that every statement can be checked.
 
 ## Overview
 
 `jev-watchdog run` is one asyncio process: an aiohttp application (`server.create_app`) with
 all state in memory in one `SurfaceRegistry`. It binds `127.0.0.1` only: `HOST` in `cli.py` is
-a constant, and `--port` (default 8787) is the only thing that moves. The plugin
+a constant, and `--port` (default 8787) is the only thing that moves. Next to the port it
+listens on a private unix socket, where `attach` reads `/state` and `/events`. `install` makes
+that same `run` a launchd agent or systemd user unit; nothing in the process daemonizes. The plugin
 (`plugin/hooks/hooks.json`) registers ten hooks, all posting to `http://127.0.0.1:8787/hooks`.
 Nine are `http` hooks with a 2 s timeout: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
 `PostToolUseFailure`, `PermissionDenied`, `SubagentStart`, `SubagentStop`, `Stop`, `SessionEnd`.
@@ -54,21 +56,37 @@ SurfaceRegistry.handle                           SurfaceRegistry.quarantine | re
   |             otherwise: a "would quarantine" line
   |
 replay.run_cases: the same handle(), synthetic payloads over transcript prefixes, no wait
+
+Printer._emit: one display record per line --> console (render_line), Feed (ring of 2000)
+                                                                          |
+cli._serve: TCPSite 127.0.0.1:<port>   create_app(registry)               |
+            UnixSite attach-<port>.sock, 0600: create_app(registry, feed, info)
+                 GET /state   state.snapshot: threads, statistics, evidence, quarantines
+                 GET /events  SSE: hello {boot}, backlog after ?since, live records
+                      ^
+attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own socket)
+                          x / r / c --> POST /quarantine | /release | /context, same socket
 ```
 
 ## Components
 
 | Module | Owns |
 |---|---|
-| `cli` | Arguments, API key, run log (0600), `run` / `replay` / control entry points. |
-| `server` | aiohttp app: `/hooks`, control endpoints, request guard, body cap. |
+| `cli` | Arguments, API key, run log (0600), the two sites, `run` / `replay` / `attach` / control entry points. |
+| `server` | aiohttp app: `/hooks`, control endpoints, `/state` and `/events` when given a feed, request guard, body cap. |
+| `feed` | Ring buffer of display records with a rising `seq`; subscribers, the slow ones dropped. |
+| `state` | `snapshot`: the registry as one JSON document, newest 200 threads. |
+| `paths` | State directory (`$XDG_STATE_HOME/jev-watchdog`), socket path per port, 0700 directory. |
+| `attach` | `AttachClient`: state, events (SSE) and control over the socket. |
+| `tui` | `WatchdogApp` (Textual): threads, one thread's statistics, feed, control keys. |
+| `service` | `install` / `uninstall`: launchd plist, systemd unit, absolute `run` arguments. |
 | `surfaces` | `SurfaceRegistry`: routing, gate, transcript wait, queues, workers, trips. |
 | `transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `tool_result_end`. |
 | `decide` | `Decider`: CUSUM per (thread, judge, question). Pure logic, no I/O. |
 | `quarantine` | `Quarantines` book, main-thread scope, the `deny_body` text. |
 | `pack` | `Question` and the validating TOML pack loader; context wording. |
 | `stats` | Read-only accumulators: counts, EWMA, streaks, latency, lag, tokens, cost. |
-| `printer` | Console lines, JSONL run log; `printable` makes control characters visible. |
+| `printer` | Display records, `render_line` (console and dashboard), JSONL run log, feed; `printable` makes control characters visible. |
 | `control` | HTTP client of the control subcommands; no proxy; spots a non-watchdog. |
 | `replay` | Cuts transcripts into steps, feeds `handle`, checks `.expect.toml`. |
 | `judge/base` | `Judge` protocol, `JudgeRequest`, `Verdict`, shared payload and answer schema. |
@@ -102,6 +120,32 @@ replay.run_cases: the same handle(), synthetic payloads over transcript prefixes
   holds either way (`_gate` ignores `enforce`); `release` resets evidence (`Decider.reset`).
 - **Scope.** `Quarantines.blocking` returns the thread's own entry, else its session's
   main-thread entry: a quarantined main thread blocks its subagents, a subagent only itself.
+- **One display record, three readers.** `Printer._emit` builds what a line shows
+  (`display_record`), prints `render_line` of it, and publishes a copy with every text cut at
+  `MESSAGE_LIMIT` (500) to the `Feed`. The run log is written separately and keeps the full
+  payloads, so the feed's ring stays small whatever a hook carries.
+- **The feed never holds up a hook.** `Feed.publish` is synchronous and only `put_nowait`s. A
+  subscriber whose queue (1000) is full is removed and its stream ended with `None`; the
+  dashboard comes back with `?since=<last seq>`. `Feed.close()` runs first at shutdown, or the
+  open `/events` handlers would hold `runner.cleanup()` up.
+- **Session content is not on the port.** `/state` and `/events` are routed only in the app
+  that `cli._serve` puts on the unix socket (0600, in a 0700 directory). The TCP port is bound
+  first; holding it, the process owns that port's socket path and replaces a stale file. On a
+  unix connection `server._refusal` skips the `Host` check (no port, and no page can open a
+  socket file) and keeps the `Origin` and content-type checks. Without a socket `run` carries
+  on and says `attach unavailable`; `run --tui` exits 1.
+- **The dashboard computes nothing.** Statistics and evidence come from `/state`, asked again
+  at most every `TICK_S` (0.25 s) while records arrive and every `IDLE_REFRESH_S` (2 s)
+  otherwise. A new `boot` in `hello` is a restarted watchdog: the feed is cleared and read
+  from 0. Thread rows are updated in place, oldest first, so none moves under the cursor.
+  Widgets are kept from `on_mount`: `query_one` searches the screen on top, and state keeps
+  arriving while the question of `x` or `c` is open.
+- **Agent-chosen text reaches the dashboard as `Text` through `printable`**, border titles
+  through `textual.markup.escape`, notifications with `markup=False`.
+- **A unit never holds the key.** `service.install` checks what `run` would refuse (packs,
+  duplicate judges, a key file for the Jev judge), writes absolute paths and the current
+  `PATH`, and refuses when only `TYPESAFE_API_KEY` is set. launchd: `KeepAlive.SuccessfulExit
+  = false`, so a stop stays stopped and a crash or a taken port is retried every 10 s.
 - **Fails open, state in memory.** `Quarantines`, `Decider` and `contexts` are plain dicts; a
   restart forgets them. `MAX_BODY_BYTES` is 64 MiB because a 413 would mean allow;
   `Printer._log` drops the run log on a write error rather than fail a deny.

@@ -61,7 +61,8 @@ jev-watchdog is an independent project, not affiliated with, endorsed by or spon
 TypeSafe AI. "Jev" and "TypeSafe" are names of TypeSafe AI, used here only to identify the
 judge backend the tool calls by default.
 
-**Contents:** [Run](#run) · [Quarantine](#quarantine) ·
+**Contents:** [Run](#run) · [In the background](#in-the-background-install-and-attach) ·
+[Quarantine](#quarantine) ·
 [Context](#context-what-you-know-and-the-agent-does-not) · [Judges](#judges) ·
 [Output](#output) · [What is sent](#what-is-sent) · [Replaying cases](#replaying-cases-offline) ·
 [Questions](#questions) · [Another judge](#plugging-in-another-judge) · [Tests](#tests) ·
@@ -101,8 +102,65 @@ reported once and the watchdog carries on without a log).
 Options: `--port` (default 8787; the plugin's URLs are fixed to 8787), `--enforce`,
 `--judge NAME[:MODEL]` (repeatable), `--claude-thinking`, `--pack FILE` (repeatable, the packs
 are merged; default `pack.toml`), `--context TEXT`, `--transcript-wait SECONDS` (default 2),
-`--key-file`, `--log`. `TYPESAFE_API_KEY` is removed from the watchdog's environment once it
-is read, so the `claude` and `codex` child processes do not inherit it.
+`--key-file`, `--log FILE` or `--log-dir DIR` (default `runs`), `--tui`. `TYPESAFE_API_KEY` is
+removed from the watchdog's environment once it is read, so the `claude` and `codex` child
+processes do not inherit it.
+
+`run --tui` shows the dashboard described below instead of console lines, in the same
+process: `q` or `Ctrl-C` stops the watchdog.
+
+## In the background: install and attach
+
+```bash
+uv run jev-watchdog install --enforce --judge fake:canary   # takes run's options (not --tui)
+uv run jev-watchdog attach                                  # the dashboard; q detaches
+uv run jev-watchdog uninstall
+```
+
+`install` makes the watchdog a service of your login session: a launchd agent on macOS
+(`~/Library/LaunchAgents/io.github.glebmish.jev-watchdog.plist`), a systemd user unit on Linux
+(`~/.config/systemd/user/jev-watchdog.service`). It starts at login and is restarted 10 s
+after a crash or a taken port; a stop stays stopped. Installing again replaces the unit with
+the new options. The systemd unit is tested as generated text only; it has not been run on a
+Linux machine.
+
+A service has no working directory and no shell environment, so `install` writes `--pack`,
+`--key-file` and the log options as absolute paths, carries your current `PATH` along (the
+`claude` and `codex` judges are found through it), and checks what `run` would refuse at
+start: the packs load, and the Jev judge has a key file. The API key is never written into the
+unit; with only `TYPESAFE_API_KEY` set, `install` stops and asks for `--key-file`. Everything
+else lives in `~/.local/state/jev-watchdog/` (or `$XDG_STATE_HOME/jev-watchdog/`), mode 0700:
+`runs/` for the run logs, `daemon.log` for the output on macOS (`journalctl --user -u
+jev-watchdog.service` on Linux), and the attach socket. Neither log is rotated.
+
+`attach` opens a dashboard on whatever watchdog holds the port, installed or started with
+`run`:
+
+```text
+ jev-watchdog · ENFORCING on exfil (jev) · judges jev · up 2h14 · 412 judgments · $0.31   ● live
+╭─ threads ────────────────────────────────╮╭─ 29af68/main · jev ─────────────────────────────╮
+│ thread         status            judged  ││ question  n  last  mean  ewma  …  evidence      │
+│ 29af68/main    QUARANTINED            3  ││ exfil     3  0.00  0.33  0.21     0.40 / 0.20   │
+│ 29af68/a26f6f  QUARANTINED with …     0  │╰─────────────────────────────────────────────────╯
+╰──────────────────────────────────────────╯  quarantined by rule:jev at 12:05:14: exfil=1.00 …
+╭─ feed · all threads ─────────────────────────────────────────────────────────────────────────╮
+│12:05:14 29af68/main   PostToolUse        Bash echo canary                                    │
+│12:05:14 29af68/main   QUARANTINED by rule:jev: exfil=1.00 (evidence 0.40 ≥ 0.20)             │
+│12:05:15 29af68/main   rejected           Bash echo after                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────╯
+ x quarantine  r release  c context  f feed: all/thread  j next judge  q detach
+```
+
+Threads are listed oldest first, with the deciding judge's rule that is closest to its limit;
+the right pane is the selected thread as one judge sees it (`j` for the next judge); the feed
+is the console's lines, the last 2000 of them on attaching. `x`, `r` and `c` do what
+`quarantine`, `release` and `context` do, on the selected thread. If the watchdog restarts, the
+dashboard reconnects and starts a fresh feed.
+
+The dashboard talks to the watchdog over a unix socket,
+`~/.local/state/jev-watchdog/attach-<port>.sock`, mode 0600. What it reads there, `/state` and
+`/events`, is not served on the TCP port: it shows what every watched session is doing, and
+the port is open to every local user. `attach --port N` finds the watchdog of another port.
 
 ## Quarantine
 

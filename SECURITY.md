@@ -10,6 +10,13 @@ agent. Only the latest commit on `main` is supported.
   Anthropic or OpenAI with the `claude` and `codex` judges. A context, when set, goes with it.
 - **Run logs are unredacted.** `runs/*.jsonl` holds full hook payloads (prompts, tool inputs
   and outputs). The file is created 0600 (`cli._private`) and `runs/` is gitignored; no more.
+- **The attach socket keeps out other users, not the agent.** `/state` and `/events` (thread
+  labels, prompt and command previews, verdicts of every watched session) are served only on
+  `attach-<port>.sock`, 0600 in a 0700 directory. The watched agent runs as you, so it can
+  open the socket, read other sessions' feeds, and use the control endpoints there too.
+- **An installed service's unit and output are files.** The unit (0600) holds the run
+  options, a `--context` text and the path of the key file, never the key. `daemon.log` and
+  the run logs are not rotated.
 - **The localhost endpoints have no authentication.** Any local process, the watched agent
   included, can release a thread, set a context, quarantine one or post made-up hook events.
 - **Quarantine is reactive and fails open.** The action that trips a rule has already run.
@@ -28,6 +35,10 @@ agent. Only the latest commit on `main` is supported.
 - A browser reaching the server: requests with an `Origin` header, a foreign `Host` or a
   non-JSON POST are refused (`server._refusal`), against cross-site posts and DNS rebinding.
 - The server binding to anything but loopback (`HOST` in `cli.py`).
+- `/state` or `/events` answering on the TCP port, or the attach socket or its directory
+  being open to other users (`cli._offer`, `paths.private_dir`).
+- The TypeSafe API key reaching a launchd or systemd unit (`service.install`).
+- Agent-chosen text reaching the dashboard as terminal escapes or as markup (`tui`).
 - The TypeSafe API key reaching the run log, the console or a judge's child process.
 - A judge session gaining tools, MCP servers, settings or hooks.
 - Terminal escape sequences in agent-chosen text reaching the console (`printer.printable`).

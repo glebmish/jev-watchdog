@@ -1,7 +1,7 @@
 # Daemon and attachable TUI — design
 
 Date: 2026-09-20
-Status: written before implementation; where it differs from the top-level `README.md`, the README is authoritative.
+Status: implemented 2026-09-20. Written before implementation; where it differs from the top-level `README.md`, the README is authoritative.
 Builds on: `2026-09-19-quarantine-design.md`, `docs/architecture.md`
 
 ## Purpose
