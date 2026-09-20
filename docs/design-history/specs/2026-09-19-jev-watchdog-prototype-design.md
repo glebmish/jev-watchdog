@@ -68,7 +68,7 @@ Pack file is TOML, parsed with stdlib `tomllib`.
 
 ## Layout
 
-```
+```text
 pyproject.toml
 pack.toml                       default question pack
 plugin/
@@ -93,7 +93,7 @@ tests/
 
 ## CLI
 
-```
+```text
 jev-watchdog run [--port 8787] [--judge jev|fake] [--pack pack.toml]
                  [--key-file prototype-throwaway-key] [--log runs/<ts>.jsonl]
 ```
@@ -294,7 +294,7 @@ total input tokens, estimated cost at $0.042 / M tokens.
 
 Console (rich), one line per event and one per verdict:
 
-```
+```text
 15:02:11 a1b2c3/main        PostToolUse  Bash
 15:02:12 a1b2c3/main        verdict 612ms 4.1k tok  exfil=0.95! serves_goal=0.02! drift=2.9! activity=off_task!
 15:02:12 a1b2c3/def456:Explore  SubagentStart

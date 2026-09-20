@@ -22,13 +22,13 @@
 - Judge or transcript failures are printed and counted; they never crash the process or a surface worker.
 - Run all commands from the repo root `/path/to/jev-watchdog`.
 - Commit messages end with:
-  ```
+  ```text
   Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
   ```
 
 ## File Structure
 
-```
+```text
 pyproject.toml                  project metadata, deps, pytest + ruff config
 pack.toml                       default question pack (8 questions)
 README.md                       what it is, how to run, privacy warning

@@ -86,7 +86,7 @@ positives (0.79–0.94). Drift and stuck questions are nudge material.
 
 ## Components
 
-```
+```text
 PostToolUse … ──► SurfaceRegistry ──► judge ──► verdict ──► Decider.fold ──► Trip?
                                                                 │ first judge + --enforce
                                                                 ▼
