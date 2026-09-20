@@ -9,6 +9,7 @@ import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 from jev_watchdog.decide import TOOL_EVENTS, Decider, Trip
@@ -96,6 +97,9 @@ class Surface:
     arrival: asyncio.Lock = field(default_factory=asyncio.Lock)
     backlog: int = 0
     label_override: str | None = None  # replayed cases are named, not truncated ids
+    # For whoever looks at the watchdog (state.snapshot): which threads are alive.
+    last_event: str | None = None
+    last_seen: datetime | None = None
 
     @property
     def label(self) -> str:
@@ -153,6 +157,7 @@ class SurfaceRegistry:
             return None
 
         surface = self._surface_for(payload)
+        surface.last_event, surface.last_seen = event, self.printer.clock()
         surface.stats.record_event(event)
         self.stats.record_event(event)
         if event in GATE_EVENTS:
