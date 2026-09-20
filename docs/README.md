@@ -5,7 +5,9 @@ and say so where they have gone stale.
 
 - [`../README.md`](../README.md) (2026-09-19 – 2026-09-20) — usage (run, quarantine, context,
   judges, replay) and the four measured runs.
-<!-- architecture.md entry goes here -->
+- [`architecture.md`](architecture.md) (2026-09-20) — the pipeline from hook event to
+  quarantine: components by module, the invariants the code keeps, the Claude Code hook
+  behaviour it depends on, external dependencies.
 - [`prototype-resume.md`](prototype-resume.md) (2026-09-19, addenda to 2026-09-20) — summary of
   findings ("résumé" here means summary, not a CV): what was proven and at what evidence grade,
   Jev against Claude and GPT, caveats, what is not built. Sections 1–9 are a snapshot;
