@@ -203,3 +203,126 @@ async def test_a_body_over_the_limit_is_reported(aiohttp_client, registry, monke
     assert response.status == 413
     assert registry.stats.errors == {"payload": 1}
     assert "body over 1024 bytes" in registry.printer.console.file.getvalue()
+
+
+# --- the attach channel: /state and /events -------------------------------------------------
+
+
+def attachable(registry):
+    import os
+    from datetime import datetime
+
+    from jev_watchdog.feed import Feed
+    from jev_watchdog.state import DaemonInfo
+
+    feed = Feed()
+    registry.printer.feed = feed
+    info = DaemonInfo(feed.boot, os.getpid(), datetime(2026, 9, 20, 9, 0, 0), 8787, None)
+    return create_app(registry, feed, info), feed
+
+
+async def read_event(response) -> tuple[str, dict]:
+    """The next server-sent event as (name, data); comments are skipped."""
+    name, data = "message", None
+    while True:
+        line = (await response.content.readline()).decode().rstrip("\n")
+        if line.startswith("event:"):
+            name = line.removeprefix("event:").strip()
+        elif line.startswith("data:"):
+            data = json.loads(line.removeprefix("data:"))
+        elif not line and data is not None:
+            return name, data
+
+
+@pytest.mark.parametrize("path", ["/state", "/events"])
+async def test_the_read_routes_do_not_exist_without_a_feed(aiohttp_client, registry, path):
+    client = await aiohttp_client(create_app(registry))
+    assert (await client.get(path)).status == 404
+
+
+async def test_state_answers_the_snapshot(aiohttp_client, registry, make_payload):
+    app, feed = attachable(registry)
+    client = await aiohttp_client(app)
+    await client.post("/hooks", json=make_payload("SessionStart"))
+    state = await (await client.get("/state")).json()
+    assert state["boot"] == feed.boot
+    assert [thread["label"] for thread in state["threads"]] == [f"{SESSION_ID[:6]}/main"]
+
+
+async def test_events_stream_says_hello_then_the_backlog_then_what_happens(
+    aiohttp_client, registry, make_payload
+):
+    app, feed = attachable(registry)
+    client = await aiohttp_client(app)
+    await client.post("/hooks", json=make_payload("SessionStart"))
+    response = await client.get("/events")
+    assert response.status == 200 and response.content_type == "text/event-stream"
+    assert await read_event(response) == ("hello", {"boot": feed.boot})
+    name, record = await read_event(response)
+    assert (name, record["seq"], record["event"]) == ("record", 1, "SessionStart")
+    await client.post("/hooks", json=make_payload("SessionEnd"))
+    name, record = await read_event(response)
+    assert (name, record["seq"], record["event"]) == ("record", 2, "SessionEnd")
+    response.close()
+
+
+async def test_events_since_skips_what_the_follower_has(aiohttp_client, registry):
+    app, _ = attachable(registry)
+    for n in range(3):
+        registry.printer.note("-", f"note {n}")
+    client = await aiohttp_client(app)
+    response = await client.get("/events", params={"since": "2"})
+    await read_event(response)
+    assert (await read_event(response))[1]["message"] == "note 2"
+    response.close()
+
+
+async def test_events_with_a_bad_since_is_a_400(aiohttp_client, registry):
+    app, _ = attachable(registry)
+    client = await aiohttp_client(app)
+    assert (await client.get("/events", params={"since": "x"})).status == 400
+
+
+async def test_a_closed_feed_ends_the_stream_and_a_gone_follower_is_unsubscribed(
+    aiohttp_client, registry
+):
+    app, feed = attachable(registry)
+    client = await aiohttp_client(app)
+    response = await client.get("/events")
+    await read_event(response)
+    feed.close()
+    assert await response.content.read() == b""
+    assert feed._subscriptions == []
+
+
+async def test_an_idle_stream_gets_keepalive_comments(aiohttp_client, registry, monkeypatch):
+    monkeypatch.setattr("jev_watchdog.server.KEEPALIVE_S", 0.01)
+    app, _ = attachable(registry)
+    client = await aiohttp_client(app)
+    response = await client.get("/events")
+    await read_event(response)
+    assert (await response.content.readline()).startswith(b":")
+    response.close()
+
+
+async def test_on_a_unix_socket_the_host_is_not_checked_but_a_web_page_is_refused(
+    registry, socket_path
+):
+    import aiohttp
+    from aiohttp import web
+
+    app, _ = attachable(registry)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.UnixSite(runner, str(socket_path)).start()
+    try:
+        connector = aiohttp.UnixConnector(path=str(socket_path))
+        async with aiohttp.ClientSession(connector=connector) as session:
+            assert (await session.get("http://localhost/state")).status == 200
+            assert (await session.get("http://anything.example/state")).status == 200
+            page = await session.get("http://localhost/state", headers={"Origin": "http://evil"})
+            assert page.status == 403
+            form = await session.post("http://localhost/release", data="target=x")
+            assert form.status == 415
+    finally:
+        await runner.cleanup()

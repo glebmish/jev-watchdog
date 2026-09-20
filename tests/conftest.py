@@ -1,4 +1,7 @@
 import os
+import shutil
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +52,14 @@ def subagent_transcript(transcript):
     path.parent.mkdir(parents=True)
     path.write_text('{"type":"user","message":"explore"}\n', encoding="utf-8")
     return path
+
+
+@pytest.fixture
+def socket_path():
+    """Under /tmp: macOS limits a socket path to 104 bytes, and pytest's tmp_path is longer."""
+    directory = tempfile.mkdtemp(dir="/tmp", prefix="jw-")
+    yield Path(directory) / "attach.sock"
+    shutil.rmtree(directory, ignore_errors=True)
 
 
 class ScriptedJudge:
