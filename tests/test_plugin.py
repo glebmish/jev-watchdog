@@ -1,8 +1,17 @@
+import asyncio
+import io
 import json
+import shutil
 from pathlib import Path
 
+import pytest
+from rich.console import Console
+
 from jev_watchdog.cli import DEFAULT_PORT
-from jev_watchdog.surfaces import ALL_EVENTS
+from jev_watchdog.judge.fake import FakeJudge
+from jev_watchdog.printer import Printer
+from jev_watchdog.server import create_app
+from jev_watchdog.surfaces import ALL_EVENTS, SurfaceRegistry
 
 PLUGIN = Path(__file__).resolve().parent.parent / "plugin"
 URL = f"http://127.0.0.1:{DEFAULT_PORT}/hooks"
@@ -36,3 +45,16 @@ def test_session_start_is_a_silent_async_command_hook():
     command = handler["command"]
     assert URL in command and "--data-binary @-" in command
     assert "-o /dev/null" in command and command.endswith("|| true")
+
+
+@pytest.mark.skipif(shutil.which("curl") is None, reason="needs curl")
+async def test_the_session_start_command_is_a_client_the_server_accepts(
+    aiohttp_server, make_payload
+):
+    registry = SurfaceRegistry([FakeJudge()], [], Printer(Console(file=io.StringIO())))
+    server = await aiohttp_server(create_app(registry))
+    command = handlers()["SessionStart"]["command"].replace(f":{DEFAULT_PORT}/", f":{server.port}/")
+    process = await asyncio.create_subprocess_shell(command, stdin=asyncio.subprocess.PIPE)
+    await process.communicate(json.dumps(make_payload("SessionStart")).encode())
+    assert registry.stats.events == {"SessionStart": 1}
+    assert registry.stats.errors == {}

@@ -133,3 +133,51 @@ async def test_context_over_http(aiohttp_client, registry, make_payload):
     assert (await client.post("/context", json={"target": SESSION_ID[:6]})).status == 400
     assert (await client.post("/context", json={"target": "nope", "text": "x"})).status == 404
     await registry.shutdown()
+
+
+async def quarantined_targets(client) -> list[str]:
+    listed = await (await client.get("/quarantine")).json()
+    return [entry["target"] for entry in listed["quarantined"]]
+
+
+async def test_a_request_with_an_origin_is_refused(aiohttp_client, registry, make_payload):
+    """A web page the operator has open can POST here, but the browser names the page."""
+    client = await aiohttp_client(create_app(registry))
+    await client.post("/hooks", json=make_payload("SessionStart"))
+    response = await client.post(
+        "/quarantine", json={"target": SESSION_ID[:6]}, headers={"Origin": "https://evil.example"}
+    )
+    assert response.status == 403 and "error" in await response.json()
+    assert await quarantined_targets(client) == []
+
+
+async def test_a_foreign_host_is_refused(aiohttp_client, registry):
+    """DNS rebinding: the page's own name resolves to 127.0.0.1, so it is same-origin."""
+    client = await aiohttp_client(create_app(registry))
+    response = await client.get("/quarantine", headers={"Host": f"evil.example:{client.port}"})
+    assert response.status == 403 and "error" in await response.json()
+    response = await client.get("/quarantine", headers={"Host": "127.0.0.1:1"})
+    assert response.status == 403
+
+
+async def test_localhost_is_a_host_too(aiohttp_client, registry):
+    client = await aiohttp_client(create_app(registry))
+    response = await client.get("/quarantine", headers={"Host": f"localhost:{client.port}"})
+    assert response.status == 200
+
+
+async def test_a_post_that_is_not_json_is_refused(aiohttp_client, registry, make_payload):
+    """text/plain is what a no-cors form or fetch can send without a preflight."""
+    client = await aiohttp_client(create_app(registry))
+    response = await client.post(
+        "/hooks", data=json.dumps(make_payload("Stop")), headers={"Content-Type": "text/plain"}
+    )
+    assert response.status == 415 and "error" in await response.json()
+    assert registry.surfaces == {}
+
+
+async def test_a_refused_request_is_reported(aiohttp_client, registry):
+    client = await aiohttp_client(create_app(registry))
+    await client.post("/release", json={"target": "x"}, headers={"Origin": "https://evil.example"})
+    assert registry.stats.errors == {"payload": 1}
+    assert "refused POST /release" in registry.printer.console.file.getvalue()
