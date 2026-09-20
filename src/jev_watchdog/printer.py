@@ -1,6 +1,7 @@
 """Foreground output: one console line per event/verdict/error, plus a JSONL run log."""
 
 import json
+import re
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict
@@ -16,6 +17,18 @@ from jev_watchdog.stats import ChoiceStat, GlobalStats, JudgeSurfaceStats, Surfa
 
 LABEL_WIDTH = 26
 PROMPT_PREVIEW = 60
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def printable(text: str) -> str:
+    """Text that is safe to put on a terminal: C0 and C1 control characters made visible.
+
+    Labels, tool inputs, contexts and judge errors are the watched agent's to choose. rich
+    drops BEL, BS, VT, FF and CR but lets ESC through, and with ESC an agent can erase the
+    QUARANTINED line, wipe the scrollback or write the clipboard (OSC 52). These are all
+    one-line fields, so newlines get no exception.
+    """
+    return _CONTROL.sub("\N{REPLACEMENT CHARACTER}", text)
 
 
 class Printer:
@@ -37,7 +50,7 @@ class Printer:
         line = self._prefix(label)
         line.append(f"{name:<18} ", style="bold")
         line.append(_event_detail(name, payload))
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log("event", label, payload=payload)
 
     def verdict(
@@ -58,7 +71,7 @@ class Printer:
             else:
                 line.append(f"{qid}={_value(answer)}")
             line.append(" ")
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log(
             "verdict",
             label,
@@ -73,13 +86,13 @@ class Printer:
         line = self._prefix(label)
         who = f"{judge} " if judge else ""
         line.append(f"{who}error {kind}: {message}", style="yellow")
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log("error", label, judge=judge, error_kind=kind, message=message)
 
     def note(self, label: str, message: str) -> None:
         line = self._prefix(label)
         line.append(message, style="dim")
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log("note", label, message=message)
 
     def quarantine(self, label: str, source: str, reason: str, enforced: bool) -> None:
@@ -88,20 +101,20 @@ class Printer:
             line.append(f"QUARANTINED by {source}: {reason}", style="bold white on red")
         else:
             line.append(f"{source} would quarantine: {reason}", style="bold red")
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log("quarantine", label, source=source, reason=reason, enforced=enforced)
 
     def rejected(self, label: str, payload: dict, reason: str) -> None:
         line = self._prefix(label)
         line.append(f"{'rejected':<18} ", style="bold red")
         line.append(_event_detail("PreToolUse", payload))
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log("rejected", label, payload=payload, reason=reason)
 
     def released(self, label: str) -> None:
         line = self._prefix(label)
         line.append("released from quarantine", style="bold green")
-        self.console.print(line, soft_wrap=True)
+        self._show(line)
         self._log("released", label)
 
     def surface_summary(self, label: str, stats: SurfaceStats, judge: str | None = None) -> None:
@@ -126,6 +139,10 @@ class Printer:
             soft_wrap=True,
         )
 
+    def _show(self, line: Text) -> None:
+        line.plain = printable(line.plain)  # same length, so the styles stay where they are
+        self.console.print(line, soft_wrap=True)
+
     def _prefix(self, label: str) -> Text:
         line = Text()
         line.append(f"{self.clock():%H:%M:%S} ", style="dim")
@@ -148,7 +165,7 @@ class Printer:
 
 def _questions_table(label: str, judge: str, stats: JudgeSurfaceStats) -> Table:
     title = f"{label} · {judge} · judgments {stats.judgments} · errors {_counter(stats.errors)}"
-    table = Table(title=Text(title), title_justify="left")
+    table = Table(title=Text(printable(title)), title_justify="left")
     for column in ("question", "n", "last", "mean", "ewma", "min", "max", "streak", "longest"):
         table.add_column(column)
     for qid, stat in stats.questions.items():

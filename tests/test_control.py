@@ -89,3 +89,20 @@ async def test_a_proxy_in_the_environment_is_not_asked_for_localhost(
     server = await aiohttp_server(create_app(registry_with_session))
     assert await asyncio.to_thread(main, ["status", "--port", str(server.port)]) == 0
     assert "nothing is quarantined" in capsys.readouterr().out
+
+
+async def test_what_the_watchdog_answers_is_printed_without_control_characters(
+    aiohttp_server, registry_with_session, capsys
+):
+    """reason is whatever was POSTed to /quarantine, and the watched agent can POST."""
+    server = await aiohttp_server(create_app(registry_with_session))
+
+    def run(*argv):
+        return asyncio.to_thread(main, [*argv, "--port", str(server.port)])
+
+    assert await run("quarantine", SESSION_ID[:6], "--reason", "x\x1b[2Jy") == 0
+    assert await run("status") == 0
+    assert await run("release", "nope\x1b[2J") == 1
+    shown = capsys.readouterr()
+    assert "\x1b" not in shown.out + shown.err
+    assert shown.out.count("x�[2Jy") == 2

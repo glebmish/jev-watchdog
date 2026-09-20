@@ -239,3 +239,31 @@ def test_a_failing_run_log_is_reported_once_and_never_raises():
     printer.note("s/main", "second")
     assert out.getvalue().count("No space left on device") == 1
     assert "first" in out.getvalue() and "second" in out.getvalue()
+
+
+ESCAPES = "\x1b[2J\x1b]52;c;ZXZpbA==\x07\x9b1A\r\n"  # clear, clipboard write, C1 CSI, CR LF
+
+
+def test_control_characters_never_reach_the_console():
+    """Everything below is the agent's to choose; ESC would let it erase QUARANTINED lines."""
+    printer, out, log = make_printer()
+    label = f"0123{ESCAPES}/main"
+    tool = {"tool_name": f"Bash{ESCAPES}", "tool_input": {"command": f"ls {ESCAPES}"}}
+    printer.event(label, {"hook_event_name": f"Post{ESCAPES}", **tool})
+    printer.event(label, {"hook_event_name": "SubagentStart", "agent_type": f"x{ESCAPES}"})
+    printer.rejected(label, {"hook_event_name": "PreToolUse", **tool}, "held")
+    printer.error(label, f"kind{ESCAPES}", f"codex stderr {ESCAPES}", judge="codex")
+    printer.note(label, f"context set: {ESCAPES}")
+    printer.quarantine(label, f"manual{ESCAPES}", f"reason {ESCAPES}", enforced=True)
+    printer.released(label)
+    printer.verdict(label, "jev", Verdict({"q": Answer(f"a{ESCAPES}")}, 1.0, 1, "jev"), set())
+    stats = SurfaceStats()
+    stats.judge("jev").record_verdict([Question("q", "noul", "i")], Verdict({}, 1.0, 1, "jev"))
+    printer.surface_summary(label, stats)
+    shown = out.getvalue()
+    assert not set(shown) & {"\x1b", "\x07", "\x9b", "\r"}
+    lines = shown.splitlines()
+    assert len(lines[:8]) == 8 and all(line.startswith("15:02:11 0123") for line in lines[:8])
+    assert "codex stderr �[2J�]52;c;ZXZpbA==�1A�" in shown  # rich itself drops BEL and CR
+    assert "0123�[2J" in lines[8]  # the table's title
+    assert records(log)[0]["surface"] == label  # the run log is JSON and keeps what was sent

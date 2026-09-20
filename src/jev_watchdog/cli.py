@@ -19,7 +19,7 @@ from jev_watchdog import control
 from jev_watchdog.judge.base import Judge
 from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
 from jev_watchdog.pack import PackError, Question, load_packs
-from jev_watchdog.printer import Printer
+from jev_watchdog.printer import Printer, printable
 from jev_watchdog.replay import ReplayError, load_case, run_cases
 from jev_watchdog.server import create_app
 from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
@@ -213,20 +213,22 @@ def _control(args: argparse.Namespace) -> int:
     except control.NotAWatchdog:
         print(f"whatever listens on port {args.port} is not a jev-watchdog", file=sys.stderr)
         return 1
+    # What comes back was put together from labels and reasons the watched agent can choose.
     if status != 200:
-        print(body.get("error", f"HTTP {status}"), file=sys.stderr)
+        print(printable(str(body.get("error", f"HTTP {status}"))), file=sys.stderr)
         return 1
     if args.command == "status":
         for entry in body["quarantined"]:
-            print(f"{entry['target']}  {entry['source']}  {entry['at']}  {entry['reason']}")
+            line = f"{entry['target']}  {entry['source']}  {entry['at']}  {entry['reason']}"
+            print(printable(line))
         if not body["quarantined"]:
             print("nothing is quarantined")
     elif args.command == "quarantine":
-        print(f"quarantined {body['target']}: {body['reason']}")
+        print(printable(f"quarantined {body['target']}: {body['reason']}"))
     elif args.command == "context":
-        print(f"context {'set' if body['context'] else 'cleared'} for {body['target']}")
+        print(printable(f"context {'set' if body['context'] else 'cleared'} for {body['target']}"))
     else:
-        print(f"released {body['target']}")
+        print(printable(f"released {body['target']}"))
     return 0
 
 
