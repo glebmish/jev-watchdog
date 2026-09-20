@@ -1,16 +1,8 @@
-import asyncio
-
 from textual.widgets import DataTable, Input, RichLog, Static
 
-from jev_watchdog.attach import AttachError, ControlError
-from jev_watchdog.tui import (
-    WatchdogApp,
-    evidence_lines,
-    header_text,
-    thread_status,
-    timeline_text,
-    uptime,
-)
+from jev_watchdog.client import Refused, Unreachable
+from jev_watchdog.draw import evidence_lines, header_text, thread_status, timeline_text, uptime
+from jev_watchdog.tui import WatchdogApp
 
 MAIN = "aaaaaa/main"
 SUB = "aaaaaa/bbbbbb:Explore"
@@ -19,10 +11,10 @@ SUB = "aaaaaa/bbbbbb:Explore"
 def thread(label: str, agent_id: str, **over) -> dict:
     numeric = {
         "kind": "numeric", "n": 3, "last": 0.1, "mean": 0.05, "ewma": 0.06,
-        "min": 0.0, "max": 0.1, "streak": 0, "longest": 1,
+        "min": 0.0, "max": 0.1, "streak": 0, "longest_streak": 1,
     }  # fmt: skip
     choice = {"kind": "choice", "counts": {"on_task": 3}, "last": "on_task", "streak": 0,
-              "longest": 0}  # fmt: skip
+              "longest_streak": 0}  # fmt: skip
     view = {
         "judgments": 3,
         "errors": {},
@@ -34,7 +26,6 @@ def thread(label: str, agent_id: str, **over) -> dict:
         "label": label,
         "session_id": "aaaaaa-session",
         "agent_id": agent_id,
-        "agent_type": None,
         "cwd": "/work",
         "last_event": "PostToolUse",
         "last_seen": "2026-09-20T09:59:50",
@@ -50,11 +41,8 @@ def thread(label: str, agent_id: str, **over) -> dict:
 def make_state(*threads: dict, boot: str = "boot-1", enforce: bool = True) -> dict:
     return {
         "boot": boot,
-        "pid": 42,
         "started_at": "2026-09-20T07:46:00",
         "now": "2026-09-20T10:00:00",
-        "port": 8787,
-        "log": "runs/x.jsonl",
         "mode": {"enforce": enforce, "rules": ["exfil"], "decider": "jev"},
         "judges": [{"name": "jev", "judgments": 412}, {"name": "claude", "judgments": 9}],
         "totals": {"surfaces": 2, "events": 900, "judgments": 421, "errors": {},
@@ -69,13 +57,12 @@ def note(seq: int, surface: str, message: str) -> dict:
 
 
 def point(minute: int, exfil: float, folded: bool = True) -> dict:
-    return {"ts": f"2026-09-20T09:{minute:02d}:00", "evidence": {"exfil": exfil} if exfil else {},
-            "flagged": 0, "folded": folded}  # fmt: skip
+    return {"ts": f"2026-09-20T09:{minute:02d}:00", "shares": {"exfil": exfil, "drift": 0.0},
+            "folded": folded}  # fmt: skip
 
 
 HISTORY = {
-    "limits": {"exfil": 0.2, "drift": 2.0},
-    "judges": {"jev": [point(1, 0.1), point(2, 0.1, folded=False), point(3, 0.4), point(9, 0)]},
+    "judges": {"jev": [point(1, 0.5), point(2, 0.5, folded=False), point(3, 2.0), point(9, 0)]},
     "marks": [
         {"ts": "2026-09-20T09:03:00", "kind": "quarantine", "judge": None},
         {"ts": "2026-09-20T09:04:00", "kind": "trip", "judge": "claude"},
@@ -85,32 +72,23 @@ HISTORY = {
 
 
 class FakeClient:
-    """A watchdog as the dashboard sees it. `end()` breaks the stream; `boot` may then change."""
+    """A watchdog as the dashboard sees it: what it answers is whatever the test last set."""
 
     def __init__(self, state: dict, records: list[dict]) -> None:
-        self.current, self.records, self.calls = state, list(records), []
+        self.current, self.log, self.calls = state, list(records), []
         self.refuse: str | None = None
         self.down = False
-        self._wake = asyncio.Event()
-        self._ended = False
 
     async def state(self) -> dict:
         if self.down:
-            raise AttachError("down")
+            raise Unreachable("down")
         return self.current
 
-    async def events(self, since: int = 0):
+    async def records(self, since: int = 0) -> dict:
         if self.down:
-            raise AttachError("down")
-        self._ended = False
-        yield "hello", {"boot": self.current["boot"]}
-        sent = since
-        while not self._ended:
-            for record in [r for r in self.records if r["seq"] > sent]:
-                sent = record["seq"]
-                yield "record", record
-            self._wake.clear()
-            await self._wake.wait()
+            raise Unreachable("down")
+        later = [record for record in self.log if record["seq"] > since]
+        return {"boot": self.current["boot"], "records": later}
 
     async def history(self, session_id: str, agent_id: str) -> dict:
         self.calls.append(("history", session_id, agent_id))
@@ -125,12 +103,7 @@ class FakeClient:
                 "bucket_s": 60, "judge": judge, "threads": rows}  # fmt: skip
 
     def publish(self, record: dict) -> None:
-        self.records.append(record)
-        self._wake.set()
-
-    def end(self) -> None:
-        self._ended = True
-        self._wake.set()
+        self.log.append(record)
 
     async def quarantine(self, target: str, reason: str) -> dict:
         return self._control("quarantine", target, reason)
@@ -144,12 +117,12 @@ class FakeClient:
     def _control(self, *call) -> dict:
         self.calls.append(call)
         if self.refuse:
-            raise ControlError(self.refuse)
+            raise Refused(self.refuse)
         return {}
 
 
 def make_app(client: FakeClient, **options) -> WatchdogApp:
-    return WatchdogApp(client, tick_s=0.01, retry_s=0.01, **options)
+    return WatchdogApp(client, tick_s=0.01, **options)
 
 
 async def until(pilot, condition, what: str) -> None:
@@ -175,7 +148,7 @@ def thread_labels(app: WatchdogApp) -> list[str]:
 
 def two_threads() -> FakeClient:
     # /state lists the most recently seen first; the table is oldest first, like the feed.
-    state = make_state(thread(SUB, "bbbbbb", agent_type="Explore"), thread(MAIN, "main"))
+    state = make_state(thread(SUB, "bbbbbb"), thread(MAIN, "main"))
     return FakeClient(state, [note(1, MAIN, "from main"), note(2, SUB, "from sub")])
 
 
@@ -268,11 +241,10 @@ async def test_a_restarted_watchdog_clears_the_feed_and_the_header_is_live_again
         await until(pilot, lambda: len(feed_lines(app)) == 2, "backlog shown")
         await until(pilot, lambda: len(thread_labels(app)) == 2, "threads listed")
         client.down = True
-        client.end()
         header = app.query_one("#header", Static)
         await until(pilot, lambda: "○ reconnecting" in str(header.render()), "loss shown")
         client.current = make_state(thread(MAIN, "main"), boot="boot-2")
-        client.records = [note(1, MAIN, "a new life")]
+        client.log = [note(1, MAIN, "a new life")]
         client.down = False
         await until(pilot, lambda: "● live" in str(header.render()), "live again")
         await until(pilot, lambda: len(feed_lines(app)) == 1, "old feed gone")
@@ -280,13 +252,16 @@ async def test_a_restarted_watchdog_clears_the_feed_and_the_header_is_live_again
         await until(pilot, lambda: thread_labels(app) == [MAIN], "old threads gone")
 
 
-async def test_a_broken_stream_of_the_same_watchdog_resumes_without_repeats():
+async def test_a_watchdog_that_comes_back_is_followed_from_where_it_was_left():
     client = two_threads()
     app = make_app(client)
     async with app.run_test(size=(140, 40)) as pilot:
         await until(pilot, lambda: len(feed_lines(app)) == 2, "backlog shown")
-        client.end()
+        client.down = True
+        header = app.query_one("#header", Static)
+        await until(pilot, lambda: "○ reconnecting" in str(header.render()), "loss shown")
         client.publish(note(3, MAIN, "after the break"))
+        client.down = False
         await until(pilot, lambda: len(feed_lines(app)) == 3, "resumed")
         assert [line.split()[-1] for line in feed_lines(app)] == ["main", "sub", "break"]
 
@@ -431,7 +406,7 @@ async def test_a_refused_chart_request_does_not_stop_the_dashboard_from_updating
     client = two_threads()
 
     async def refuses(*_args, **_kwargs):
-        raise ControlError("minutes or buckets out of range")
+        raise Refused("minutes or buckets out of range")
 
     client.timeline = refuses
     app = make_app(client)

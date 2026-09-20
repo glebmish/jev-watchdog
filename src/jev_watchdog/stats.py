@@ -1,13 +1,15 @@
 """Read-only accumulators. Nothing here triggers an action; decide.py does that."""
 
 import math
-from collections import Counter
+from collections import Counter, deque
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from jev_watchdog.judge.base import Verdict
 from jev_watchdog.pack import Question
 
 EWMA_ALPHA = 0.3
+RECENT = 10_000  # judgments whose latency and lag are kept, per judge
 
 
 @dataclass
@@ -104,10 +106,11 @@ class JudgeStats:
 
     judgments: int = 0
     errors: Counter[str] = field(default_factory=Counter)
-    latencies_ms: list[float] = field(default_factory=list)
+    # The last RECENT of each: a service judges for weeks, and /state sorts these every time.
+    latencies_ms: deque[float] = field(default_factory=lambda: deque(maxlen=RECENT))
     # Lag is hook received -> verdict ready: latency plus time spent queued behind
     # earlier events of the same surface. It grows when a judge cannot keep up.
-    lags_ms: list[float] = field(default_factory=list)
+    lags_ms: deque[float] = field(default_factory=lambda: deque(maxlen=RECENT))
     input_tokens: int = 0
     cost_usd: float = 0.0
 
@@ -159,9 +162,9 @@ class GlobalStats:
         return sum(judge.cost_usd for judge in self.judges.values())
 
 
-def percentile(values: list[float], p: float) -> float | None:
+def percentile(values: Iterable[float], p: float) -> float | None:
     """Nearest-rank percentile."""
-    if not values:
-        return None
     ordered = sorted(values)
+    if not ordered:
+        return None
     return ordered[max(math.ceil(p / 100 * len(ordered)), 1) - 1]

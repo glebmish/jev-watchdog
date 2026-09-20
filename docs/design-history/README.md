@@ -11,6 +11,9 @@ as documentation of what it is now.
 - Later features — session context, the Codex judge, the transcript wait, `--pack` merging —
   have no spec. They are documented in the top-level README and in
   [`prototype-resume.md`](../prototype-resume.md), sections 10–12.
+- The daemon spec's event stream (`/events`, server-sent events, feed subscribers) was replaced
+  by polling `/records` when the project was simplified on 2026-09-20; `attach.py` and
+  `control.py` became `client.py`, and serving moved from `cli.py` to `serve.py`.
 - "superpowers" in the plan headers is the name of the Claude Code plugin whose workflow
   produced these files; the skills it names are that plugin's, not part of this repo.
 

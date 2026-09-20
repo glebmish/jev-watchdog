@@ -274,7 +274,7 @@ async def test_lag_includes_time_queued_behind_earlier_events(make_payload, out)
     for _ in range(3):
         await registry.handle(make_payload())
     await registry.drain()
-    lags = registry.stats.judges["slow"].lags_ms
+    lags = list(registry.stats.judges["slow"].lags_ms)
     assert lags[0] >= 50 and lags[2] >= 150  # third job waited for the first two
     assert lags == sorted(lags)
     await registry.shutdown()

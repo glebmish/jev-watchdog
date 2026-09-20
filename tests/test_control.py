@@ -1,6 +1,5 @@
 import asyncio
 import io
-import urllib.request
 
 import pytest
 from aiohttp import web
@@ -83,7 +82,6 @@ async def test_a_proxy_in_the_environment_is_not_asked_for_localhost(
     aiohttp_server, registry_with_session, capsys, monkeypatch
 ):
     monkeypatch.setenv("http_proxy", "http://127.0.0.1:1")
-    monkeypatch.setattr(urllib.request, "_opener", None)  # urlopen reads the proxies only once
     monkeypatch.delenv("no_proxy", raising=False)
     monkeypatch.delenv("NO_PROXY", raising=False)
     server = await aiohttp_server(create_app(registry_with_session))

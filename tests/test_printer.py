@@ -302,7 +302,7 @@ def test_every_console_line_is_the_rendering_of_the_published_record():
 
     printer, out, feed = make_fed_printer()
     say_everything(printer)
-    published = feed.subscribe().backlog
+    published = feed.since()
     assert [record["kind"] for record in published] == [
         "event", "verdict", "error", "note", "quarantine", "quarantine", "rejected", "released",
     ]  # fmt: skip
@@ -312,7 +312,7 @@ def test_every_console_line_is_the_rendering_of_the_published_record():
 def test_published_records_hold_what_a_line_shows_and_no_payload():
     printer, _, feed = make_fed_printer()
     say_everything(printer)
-    event, verdict, error, *_ = feed.subscribe().backlog
+    event, verdict, error, *_ = feed.since()
     assert event == {
         "seq": 1,
         "ts": "2026-09-19T15:02:11",
@@ -343,7 +343,7 @@ def test_a_huge_tool_input_makes_a_small_record():
         "tool_response": "z" * 2**20,
     }
     printer.event("a/main", payload)
-    assert len(json.dumps(feed.subscribe().backlog[0])) < 1024
+    assert len(json.dumps(feed.since()[0])) < 1024
 
 
 def test_long_messages_are_cut_in_the_record_but_not_in_the_log():
@@ -353,7 +353,7 @@ def test_long_messages_are_cut_in_the_record_but_not_in_the_log():
     log, feed = io.StringIO(), Feed()
     printer = Printer(Console(file=io.StringIO()), log, feed=feed)
     printer.error("a/main", "other", "e" * 2000, judge="jev")
-    assert len(feed.subscribe().backlog[0]["message"]) == MESSAGE_LIMIT
+    assert len(feed.since()[0]["message"]) == MESSAGE_LIMIT
     assert len(records(log)[0]["message"]) == 2000
 
 

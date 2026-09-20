@@ -52,8 +52,8 @@ class Printer:
 
     def event(self, label: str, payload: dict) -> None:
         name = payload.get("hook_event_name", "?")
-        self._emit("event", label, {"event": name, "detail": _event_detail(name, payload)})
-        self._log("event", label, payload=payload)
+        shown = {"event": name, "detail": _event_detail(name, payload)}
+        self._emit("event", label, shown, log={"payload": payload})
 
     def verdict(
         self,
@@ -71,37 +71,33 @@ class Printer:
             "answers": {qid: answer.value for qid, answer in verdict.answers.items()},
             "flagged": sorted(flagged),
         }
-        self._emit("verdict", label, shown)
-        self._log(
-            "verdict",
-            label,
-            judge=judge,
-            step=step,  # replay step number; None for live events
-            flagged=sorted(flagged),
-            context=context,  # what the judge was told next to the transcript, if anything
-            verdict=asdict(verdict),
-        )
+        log = {
+            "judge": judge,
+            "step": step,  # replay step number; None for live events
+            "flagged": sorted(flagged),
+            "context": context,  # what the judge was told next to the transcript, if anything
+            "verdict": asdict(verdict),
+        }
+        self._emit("verdict", label, shown, log)
 
     def error(self, label: str, kind: str, message: str, judge: str | None = None) -> None:
         self._emit("error", label, {"judge": judge, "error_kind": kind, "message": message})
-        self._log("error", label, judge=judge, error_kind=kind, message=message)
 
     def note(self, label: str, message: str) -> None:
         self._emit("note", label, {"message": message})
-        self._log("note", label, message=message)
 
     def quarantine(self, label: str, source: str, reason: str, enforced: bool) -> None:
         self._emit("quarantine", label, {"source": source, "reason": reason, "enforced": enforced})
-        self._log("quarantine", label, source=source, reason=reason, enforced=enforced)
 
     def rejected(self, label: str, payload: dict, reason: str) -> None:
         detail = _event_detail("PreToolUse", payload)
-        self._emit("rejected", label, {"detail": detail, "reason": reason})
-        self._log("rejected", label, payload=payload, reason=reason)
+        self._emit(
+            "rejected", label, {"detail": detail, "reason": reason},
+            log={"payload": payload, "reason": reason},
+        )  # fmt: skip
 
     def released(self, label: str) -> None:
         self._emit("released", label, {})
-        self._log("released", label)
 
     def surface_summary(self, label: str, stats: SurfaceStats, judge: str | None = None) -> None:
         """One table per judge for this surface, or only `judge`'s table."""
@@ -125,19 +121,19 @@ class Printer:
             soft_wrap=True,
         )
 
-    def _emit(self, kind: str, label: str, shown: dict) -> None:
-        """Show one display record on the console and hand it to whoever is attached."""
-        record = display_record(kind, label, self.clock(), **shown)
+    def _emit(self, kind: str, label: str, shown: dict, log: dict | None = None) -> None:
+        """One thing that happened, to its three readers: the console and the feed get the
+        display record, the run log gets `log`, the fuller version, where there is one."""
+        ts = self.clock()
+        record = display_record(kind, label, ts, **shown)
         self.console.print(render_line(record), soft_wrap=True)
         if self.feed is not None:
             self.feed.publish(_cut(record))
-
-    def _log(self, kind: str, label: str, **data) -> None:
         if self.log_file is None:
             return
-        record = {"ts": self.clock().isoformat(timespec="seconds"), "kind": kind, "surface": label}
+        logged = display_record(kind, label, ts, **(shown if log is None else log))
         try:
-            self.log_file.write(json.dumps(record | data, ensure_ascii=False) + "\n")
+            self.log_file.write(json.dumps(logged, ensure_ascii=False) + "\n")
             self.log_file.flush()
         except OSError as exc:
             # Printer calls sit on the hook path and in the judge workers: a full disk must

@@ -179,7 +179,7 @@ memory like everything else.
 
 The dashboard talks to the watchdog over a unix socket,
 `~/.local/state/jev-watchdog/attach-<port>.sock`, mode 0600. What it reads there, `/state` and
-`/events`, is not served on the TCP port: it shows what every watched session is doing, and
+`/records` and the charts' data, is not served on the TCP port: it shows what every watched session is doing, and
 the port is open to every local user. `attach --port N` finds the watchdog of another port.
 
 ## Quarantine

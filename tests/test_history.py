@@ -17,56 +17,53 @@ def at(minutes: float) -> datetime:
     return T0 + timedelta(minutes=minutes)
 
 
-def test_series_is_each_judges_points_with_the_limits_and_marks():
+def test_series_is_each_judges_evidence_as_a_share_of_the_limits_with_the_marks():
     history = History(RULES)
-    history.record(MAIN, "jev", at(0), {"exfil": 0.1}, flagged=0, folded=True)
-    history.record(MAIN, "jev", at(1), {"exfil": 0.1}, flagged=0, folded=False)
-    history.record(MAIN, "claude", at(1), {"exfil": 0.3, "drift": 1.0}, flagged=2, folded=True)
+    history.record(MAIN, "jev", at(0), {"exfil": 0.1}, folded=True)
+    history.record(MAIN, "jev", at(1), {"exfil": 0.1}, folded=False)
+    history.record(MAIN, "claude", at(1), {"exfil": 0.3, "drift": 1.0}, folded=True)
     history.mark(MAIN, at(2), "quarantine")
     assert history.series(MAIN) == {
-        "limits": {"exfil": 0.2, "drift": 2.0},
         "judges": {
             "jev": [
-                {"ts": "2026-09-20T10:00:00", "evidence": {"exfil": 0.1}, "flagged": 0,
+                {"ts": "2026-09-20T10:00:00", "shares": {"exfil": 0.5, "drift": 0.0},
                  "folded": True},
-                {"ts": "2026-09-20T10:01:00", "evidence": {"exfil": 0.1}, "flagged": 0,
+                {"ts": "2026-09-20T10:01:00", "shares": {"exfil": 0.5, "drift": 0.0},
                  "folded": False},
             ],
             "claude": [
-                {"ts": "2026-09-20T10:01:00", "evidence": {"exfil": 0.3, "drift": 1.0},
-                 "flagged": 2, "folded": True},
+                {"ts": "2026-09-20T10:01:00", "shares": {"exfil": 1.5, "drift": 0.5},
+                 "folded": True},
             ],
         },
         "marks": [{"ts": "2026-09-20T10:02:00", "kind": "quarantine", "judge": None}],
     }  # fmt: skip
-    assert history.series(SUB) == {"limits": {"exfil": 0.2, "drift": 2.0}, "judges": {},
-                                   "marks": []}  # fmt: skip
+    assert history.series(SUB) == {"judges": {}, "marks": []}
 
 
 def test_only_the_last_points_are_kept():
     history = History(RULES, size=3)
     for n in range(5):
-        history.record(MAIN, "jev", at(n), {"exfil": n / 10}, flagged=0, folded=True)
-    assert [p["evidence"]["exfil"] for p in history.series(MAIN)["judges"]["jev"]] == [
-        0.2, 0.3, 0.4,
-    ]  # fmt: skip
+        history.record(MAIN, "jev", at(n), {"exfil": n / 10}, folded=True)
+    assert [p["shares"]["exfil"] for p in history.series(MAIN)["judges"]["jev"]] == [1.0, 1.5, 2.0]
 
 
 def test_a_release_puts_every_judges_line_back_to_zero():
     history = History(RULES)
-    history.record(MAIN, "jev", at(0), {"exfil": 0.4}, flagged=1, folded=True)
+    history.record(MAIN, "jev", at(0), {"exfil": 0.4}, folded=True)
     history.mark(MAIN, at(1), "release")
     last = history.series(MAIN)["judges"]["jev"][-1]
-    assert last == {"ts": "2026-09-20T10:01:00", "evidence": {}, "flagged": 0, "folded": True}
+    assert last == {"ts": "2026-09-20T10:01:00", "shares": {"exfil": 0.0, "drift": 0.0},
+                    "folded": True}  # fmt: skip
 
 
 def test_timeline_is_the_worst_share_of_a_limit_per_bucket():
     history = History(RULES)
-    history.record(MAIN, "jev", at(1), {"exfil": 0.05, "drift": 1.0}, flagged=0, folded=True)
-    history.record(MAIN, "jev", at(1.5), {"exfil": 0.1}, flagged=0, folded=True)
-    history.record(MAIN, "jev", at(35), {"exfil": 0.4}, flagged=1, folded=True)
-    history.record(MAIN, "claude", at(2), {"exfil": 0.2}, flagged=1, folded=True)
-    history.record(SUB, "jev", at(-90), {"exfil": 0.2}, flagged=1, folded=True)  # too old
+    history.record(MAIN, "jev", at(1), {"exfil": 0.05, "drift": 1.0}, folded=True)
+    history.record(MAIN, "jev", at(1.5), {"exfil": 0.1}, folded=True)
+    history.record(MAIN, "jev", at(35), {"exfil": 0.4}, folded=True)
+    history.record(MAIN, "claude", at(2), {"exfil": 0.2}, folded=True)
+    history.record(SUB, "jev", at(-90), {"exfil": 0.2}, folded=True)  # too old
     history.mark(MAIN, at(35), "quarantine")
     history.mark(MAIN, at(50), "release")
     history.mark(MAIN, at(3), "trip", judge="claude")
@@ -76,7 +73,7 @@ def test_timeline_is_the_worst_share_of_a_limit_per_bucket():
     assert timeline["bucket_s"] == 600 and timeline["judge"] == "jev"
     (row,) = timeline["threads"]  # a thread with nothing in the window is left out
     assert row["label"] == "s1/main" and (row["session_id"], row["agent_id"]) == MAIN
-    assert row["cells"] == [0.5, None, None, 2.0, None, 0.0]  # the release zeroes the line
+    assert row["cells"] == [0.5, None, None, 2.0, None, 0.0]
     assert row["marks"] == {"3": "quarantine", "5": "release"}  # claude's trip is not jev's
 
     claude = history.timeline(threads, "claude", now=at(60), minutes=60, buckets=6)
@@ -89,10 +86,10 @@ def test_only_the_most_recently_judged_threads_are_kept():
     history = History(RULES, threads=2)
     keys = [SurfaceKey(f"s{n}", "main") for n in range(3)]
     for n, key in enumerate(keys):
-        history.record(key, "jev", at(n), {"exfil": 0.1}, flagged=0, folded=True)
+        history.record(key, "jev", at(n), {"exfil": 0.1}, folded=True)
         history.mark(key, at(n), "trip", judge="jev")
-    history.record(keys[1], "jev", at(5), {"exfil": 0.2}, flagged=0, folded=True)  # still alive
-    history.record(SurfaceKey("s3", "main"), "jev", at(6), {"exfil": 0.1}, flagged=0, folded=True)
+    history.record(keys[1], "jev", at(5), {"exfil": 0.2}, folded=True)  # still alive
+    history.record(SurfaceKey("s3", "main"), "jev", at(6), {"exfil": 0.1}, folded=True)
     kept = [key for key in [*keys, SurfaceKey("s3", "main")] if history.series(key)["judges"]]
     assert kept == [keys[1], SurfaceKey("s3", "main")]
     assert history.series(keys[0])["marks"] == [] and history.series(keys[2])["marks"] == []

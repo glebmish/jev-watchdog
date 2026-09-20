@@ -10,7 +10,7 @@ agent. Only the latest commit on `main` is supported.
   Anthropic or OpenAI with the `claude` and `codex` judges. A context, when set, goes with it.
 - **Run logs are unredacted.** `runs/*.jsonl` holds full hook payloads (prompts, tool inputs
   and outputs). The file is created 0600 (`cli._private`) and `runs/` is gitignored; no more.
-- **The attach socket keeps out other users, not the agent.** `/state` and `/events` (thread
+- **The attach socket keeps out other users, not the agent.** `/state`, `/records`, `/history` and `/timeline` (thread
   labels, prompt and command previews, verdicts of every watched session) are served only on
   `attach-<port>.sock`, 0600 in a 0700 directory. The watched agent runs as you, so it can
   open the socket, read other sessions' feeds, and use the control endpoints there too.
@@ -35,8 +35,8 @@ agent. Only the latest commit on `main` is supported.
 - A browser reaching the server: requests with an `Origin` header, a foreign `Host` or a
   non-JSON POST are refused (`server._refusal`), against cross-site posts and DNS rebinding.
 - The server binding to anything but loopback (`HOST` in `cli.py`).
-- `/state` or `/events` answering on the TCP port, or the attach socket or its directory
-  being open to other users (`cli._offer`, `paths.private_dir`).
+- Any route of `state.add_routes` answering on the TCP port, or the attach socket or its
+  directory being open to other users (`serve.serve`, `paths.private_dir`).
 - The TypeSafe API key reaching a launchd or systemd unit (`service.install`).
 - Agent-chosen text reaching the dashboard as terminal escapes or as markup (`tui`).
 - The TypeSafe API key reaching the run log, the console or a judge's child process.

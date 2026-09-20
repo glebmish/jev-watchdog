@@ -1,12 +1,13 @@
 """What the dashboard's charts are drawn from: the recent evidence of each agent thread.
 
 `Decider` knows only the evidence of now. This keeps, per thread and judge, the last verdicts
-with the evidence they left, and when the thread was quarantined, released or would have been
-quarantined. Bounded, in memory, read-only for everything else: nothing here decides.
+with the evidence they left, as a share of each rule's limit (1.0 is where it quarantines), and
+when the thread was quarantined, released or would have been quarantined. Bounded, in memory,
+read-only for everything else: nothing here decides.
 """
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from jev_watchdog.pack import Question
@@ -14,14 +15,13 @@ from jev_watchdog.transcript import SurfaceKey
 
 HISTORY = 500  # verdicts kept per thread and judge
 MARKS = 100  # per thread
-THREADS = 200  # most recently judged or marked; state.MAX_THREADS is what a dashboard shows
+THREADS = 200  # the ones heard of last; a service runs for weeks
 
 
 @dataclass(frozen=True)
 class Point:
     ts: datetime
-    evidence: dict[str, float]  # after this verdict, by rule
-    flagged: int
+    shares: dict[str, float]  # evidence / limit after this verdict, by rule
     folded: bool  # a tool event: the only kind that moves the evidence (decide.TOOL_EVENTS)
 
 
@@ -32,56 +32,45 @@ class Mark:
     judge: str | None = None  # whose trip it was
 
 
+@dataclass
+class _Thread:
+    points: dict[str, deque[Point]] = field(default_factory=dict)  # by judge
+    marks: deque[Mark] = field(default_factory=lambda: deque(maxlen=MARKS))
+
+
 class History:
     def __init__(self, rules: list[Question], size: int = HISTORY, threads: int = THREADS) -> None:
-        self.limits = {rule.id: rule.quarantine_limit for rule in rules}
-        self._size = size
-        self._threads = threads
-        self._recent: dict[SurfaceKey, None] = {}  # insertion-ordered: oldest first
-        self._points: dict[SurfaceKey, dict[str, deque[Point]]] = {}
-        self._marks: dict[SurfaceKey, deque[Mark]] = {}
+        self._limits = {rule.id: rule.quarantine_limit for rule in rules}
+        self._size, self._max_threads = size, threads
+        self._threads: dict[SurfaceKey, _Thread] = {}  # insertion-ordered: oldest first
 
     def record(
-        self,
-        key: SurfaceKey,
-        judge: str,
-        ts: datetime,
-        evidence: dict[str, float],
-        flagged: int,
-        folded: bool,
+        self, key: SurfaceKey, judge: str, ts: datetime, evidence: dict[str, float], folded: bool
     ) -> None:
-        self._touch(key)
-        points = self._points.setdefault(key, {}).setdefault(judge, deque(maxlen=self._size))
-        points.append(Point(ts, dict(evidence), flagged, folded))
+        shares = {
+            rule: round(evidence.get(rule, 0.0) / limit, 6) for rule, limit in self._limits.items()
+        }
+        points = self._thread(key).points.setdefault(judge, deque(maxlen=self._size))
+        points.append(Point(ts, shares, folded))
 
     def mark(self, key: SurfaceKey, ts: datetime, kind: str, judge: str | None = None) -> None:
-        self._touch(key)
-        self._marks.setdefault(key, deque(maxlen=MARKS)).append(Mark(ts, kind, judge))
+        thread = self._thread(key)
+        thread.marks.append(Mark(ts, kind, judge))
         if kind == "release":  # Decider.reset: every judge's evidence starts over
-            for points in self._points.get(key, {}).values():
-                points.append(Point(ts, {}, 0, True))
-
-    def _touch(self, key: SurfaceKey) -> None:
-        """A service runs for weeks: keep the threads that were last heard of, drop the rest."""
-        self._recent.pop(key, None)
-        self._recent[key] = None
-        while len(self._recent) > self._threads:
-            oldest = next(iter(self._recent))
-            del self._recent[oldest]
-            self._points.pop(oldest, None)
-            self._marks.pop(oldest, None)
+            for name in thread.points:
+                self.record(key, name, ts, {}, folded=True)
 
     def series(self, key: SurfaceKey) -> dict:
         """One thread, every judge: what the evidence chart draws."""
+        thread = self._threads.get(key) or _Thread()
         return {
-            "limits": dict(self.limits),
             "judges": {
-                judge: [_point(point) for point in points]
-                for judge, points in self._points.get(key, {}).items()
+                judge: [{"ts": _iso(p.ts), "shares": p.shares, "folded": p.folded} for p in points]
+                for judge, points in thread.points.items()
             },
             "marks": [
                 {"ts": _iso(mark.ts), "kind": mark.kind, "judge": mark.judge}
-                for mark in self._marks.get(key, ())
+                for mark in thread.marks
             ],
         }
 
@@ -95,8 +84,8 @@ class History:
     ) -> dict:
         """The last `minutes` of every thread in `buckets` cells, as one judge saw them.
 
-        A cell is the worst share of a limit that any rule's evidence reached in it (1.0 is
-        the limit), None where nothing was judged.
+        A cell is the worst share of a limit that any rule reached in it, None where nothing
+        was judged.
         """
         start = now - timedelta(minutes=minutes)
         width = (now - start) / buckets
@@ -106,18 +95,16 @@ class History:
 
         rows = []
         for key, label in threads:
+            thread = self._threads.get(key) or _Thread()
             cells: list[float | None] = [None] * buckets
-            for point in self._points.get(key, {}).get(judge, ()):
-                index = bucket(point.ts)
-                if index is not None:
-                    # In order: an empty evidence is a release, and replaces what it reset.
-                    worst = max(self._share(point), cells[index] or 0.0)
-                    cells[index] = worst if point.evidence else 0.0
-            marks = {}
-            for mark in self._marks.get(key, ()):
-                index = bucket(mark.ts)
-                if index is not None and mark.judge in (None, judge):
-                    marks[str(index)] = mark.kind
+            for point in thread.points.get(judge, ()):
+                if (index := bucket(point.ts)) is not None:
+                    cells[index] = max([cells[index] or 0.0, *point.shares.values()])
+            marks = {
+                str(index): mark.kind
+                for mark in thread.marks
+                if mark.judge in (None, judge) and (index := bucket(mark.ts)) is not None
+            }
             if marks or any(cell is not None for cell in cells):
                 rows.append(
                     {"label": label, "session_id": key.session_id, "agent_id": key.agent_id,
@@ -131,19 +118,13 @@ class History:
             "threads": rows,
         }
 
-    def _share(self, point: Point) -> float:
-        shares = [value / self.limits[rule] for rule, value in point.evidence.items()
-                  if self.limits.get(rule)]  # fmt: skip
-        return round(max(shares, default=0.0), 6)
-
-
-def _point(point: Point) -> dict:
-    return {
-        "ts": _iso(point.ts),
-        "evidence": point.evidence,
-        "flagged": point.flagged,
-        "folded": point.folded,
-    }
+    def _thread(self, key: SurfaceKey) -> _Thread:
+        """The thread's history, moved to the young end; the oldest go when there are too many."""
+        thread = self._threads.pop(key, None) or _Thread()
+        self._threads[key] = thread
+        while len(self._threads) > self._max_threads:
+            del self._threads[next(iter(self._threads))]
+        return thread
 
 
 def _iso(moment: datetime) -> str:

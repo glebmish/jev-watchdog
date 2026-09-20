@@ -205,37 +205,24 @@ async def test_a_body_over_the_limit_is_reported(aiohttp_client, registry, monke
     assert "body over 1024 bytes" in registry.printer.console.file.getvalue()
 
 
-# --- the attach channel: /state and /events -------------------------------------------------
+# --- what a dashboard reads: state.add_routes, for the app on the socket only ---------------
 
 
 def attachable(registry):
-    import os
-    from datetime import datetime
-
     from jev_watchdog.feed import Feed
-    from jev_watchdog.state import DaemonInfo
+    from jev_watchdog.state import add_routes
 
     feed = Feed()
     registry.printer.feed = feed
-    info = DaemonInfo(feed.boot, os.getpid(), datetime(2026, 9, 20, 9, 0, 0), 8787, None)
-    return create_app(registry, feed, info), feed
+    app = create_app(registry)
+    add_routes(app, registry, feed)
+    return app, feed
 
 
-async def read_event(response) -> tuple[str, dict]:
-    """The next server-sent event as (name, data); comments are skipped."""
-    name, data = "message", None
-    while True:
-        line = (await response.content.readline()).decode().rstrip("\n")
-        if line.startswith("event:"):
-            name = line.removeprefix("event:").strip()
-        elif line.startswith("data:"):
-            data = json.loads(line.removeprefix("data:"))
-        elif not line and data is not None:
-            return name, data
-
-
-@pytest.mark.parametrize("path", ["/state", "/events"])
-async def test_the_read_routes_do_not_exist_without_a_feed(aiohttp_client, registry, path):
+@pytest.mark.parametrize("path", ["/state", "/records", "/history", "/timeline"])
+async def test_the_read_routes_are_not_in_the_app_that_goes_on_the_port(
+    aiohttp_client, registry, path
+):
     client = await aiohttp_client(create_app(registry))
     assert (await client.get(path)).status == 404
 
@@ -249,60 +236,19 @@ async def test_state_answers_the_snapshot(aiohttp_client, registry, make_payload
     assert [thread["label"] for thread in state["threads"]] == [f"{SESSION_ID[:6]}/main"]
 
 
-async def test_events_stream_says_hello_then_the_backlog_then_what_happens(
-    aiohttp_client, registry, make_payload
-):
+async def test_records_are_the_feed_after_a_number(aiohttp_client, registry, make_payload):
     app, feed = attachable(registry)
     client = await aiohttp_client(app)
     await client.post("/hooks", json=make_payload("SessionStart"))
-    response = await client.get("/events")
-    assert response.status == 200 and response.content_type == "text/event-stream"
-    assert await read_event(response) == ("hello", {"boot": feed.boot})
-    name, record = await read_event(response)
-    assert (name, record["seq"], record["event"]) == ("record", 1, "SessionStart")
     await client.post("/hooks", json=make_payload("SessionEnd"))
-    name, record = await read_event(response)
-    assert (name, record["seq"], record["event"]) == ("record", 2, "SessionEnd")
-    response.close()
-
-
-async def test_events_since_skips_what_the_follower_has(aiohttp_client, registry):
-    app, _ = attachable(registry)
-    for n in range(3):
-        registry.printer.note("-", f"note {n}")
-    client = await aiohttp_client(app)
-    response = await client.get("/events", params={"since": "2"})
-    await read_event(response)
-    assert (await read_event(response))[1]["message"] == "note 2"
-    response.close()
-
-
-async def test_events_with_a_bad_since_is_a_400(aiohttp_client, registry):
-    app, _ = attachable(registry)
-    client = await aiohttp_client(app)
-    assert (await client.get("/events", params={"since": "x"})).status == 400
-
-
-async def test_a_closed_feed_ends_the_stream_and_a_gone_follower_is_unsubscribed(
-    aiohttp_client, registry
-):
-    app, feed = attachable(registry)
-    client = await aiohttp_client(app)
-    response = await client.get("/events")
-    await read_event(response)
-    feed.close()
-    assert await response.content.read() == b""
-    assert feed._subscriptions == []
-
-
-async def test_an_idle_stream_gets_keepalive_comments(aiohttp_client, registry, monkeypatch):
-    monkeypatch.setattr("jev_watchdog.server.KEEPALIVE_S", 0.01)
-    app, _ = attachable(registry)
-    client = await aiohttp_client(app)
-    response = await client.get("/events")
-    await read_event(response)
-    assert (await response.content.readline()).startswith(b":")
-    response.close()
+    answer = await (await client.get("/records")).json()
+    assert answer["boot"] == feed.boot
+    assert [(r["seq"], r["event"]) for r in answer["records"]] == [
+        (1, "SessionStart"), (2, "SessionEnd"),
+    ]  # fmt: skip
+    later = await (await client.get("/records", params={"since": "1"})).json()
+    assert [record["seq"] for record in later["records"]] == [2]
+    assert (await client.get("/records", params={"since": "x"})).status == 400
 
 
 async def test_on_a_unix_socket_the_host_is_not_checked_but_a_web_page_is_refused(
@@ -353,9 +299,8 @@ async def test_history_is_a_threads_evidence_and_what_happened_to_it(
     await client.post("/release", json={"target": SESSION_ID[:6]})
     response = await client.get("/history", params={"session_id": SESSION_ID, "agent_id": "main"})
     history = await response.json()
-    assert history["limits"] == {"exfil": 0.2}
-    assert [point["evidence"] for point in history["judges"]["jev"]] == [
-        {"exfil": 0.1}, {"exfil": 0.6}, {},
+    assert [point["shares"] for point in history["judges"]["jev"]] == [
+        {"exfil": 0.5}, {"exfil": 3.0}, {"exfil": 0.0},
     ]  # fmt: skip
     assert [mark["kind"] for mark in history["marks"]] == ["quarantine", "release"]
     missing = await client.get("/history", params={"session_id": "nobody", "agent_id": "main"})
@@ -376,12 +321,8 @@ async def test_timeline_buckets_every_thread_as_the_deciding_judge_saw_it(
     assert timeline["judge"] == "jev" and timeline["bucket_s"] == 120
     (row,) = timeline["threads"]
     assert row["label"] == f"{SESSION_ID[:6]}/main" and row["cells"][-1] == 0.5
-    for bad in ({"minutes": "x"}, {"buckets": "0"}, {"minutes": "999999"}):
-        assert (await client.get("/timeline", params=bad)).status == 400
+    assert (await client.get("/timeline", params={"minutes": "x"})).status == 400
+    # An older or newer dashboard may ask for more than this watchdog gives: it gets the most.
+    wide = await (await client.get("/timeline", params={"buckets": "99999"})).json()
+    assert len(wide["threads"][0]["cells"]) == 400
     await tripping.shutdown()
-
-
-@pytest.mark.parametrize("path", ["/history", "/timeline"])
-async def test_the_chart_routes_do_not_exist_without_a_feed(aiohttp_client, registry, path):
-    client = await aiohttp_client(create_app(registry))
-    assert (await client.get(path)).status == 404

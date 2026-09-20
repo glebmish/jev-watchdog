@@ -8,32 +8,34 @@ talk to it.
 import argparse
 import asyncio
 import os
-import signal
 import sys
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
-from aiohttp import web
 from rich.console import Console
 
-from jev_watchdog import control, service
-from jev_watchdog.attach import AttachClient, AttachError, ControlError
+from jev_watchdog import service
+from jev_watchdog.client import Client, NotAWatchdog, Refused, Unreachable
 from jev_watchdog.feed import Feed
 from jev_watchdog.judge.base import Judge
-from jev_watchdog.judge.registry import JUDGES, JudgeConfig, backend_of, make_judge
+from jev_watchdog.judge.registry import (
+    JUDGES,
+    JudgeConfig,
+    backend_of,
+    check_specs,
+    make_judge,
+    needs_key,
+)
 from jev_watchdog.pack import PackError, Question, load_packs
-from jev_watchdog.paths import private_dir, socket_path
+from jev_watchdog.paths import socket_path
 from jev_watchdog.printer import Printer, printable
 from jev_watchdog.replay import ReplayError, load_case, run_cases
-from jev_watchdog.server import create_app
-from jev_watchdog.state import DaemonInfo
+from jev_watchdog.serve import HOST, attach, dashboard, serve
 from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
 
 DEFAULT_PORT = 8787
 DEFAULT_KEY_FILE = Path("prototype-throwaway-key")
-HOST = "127.0.0.1"
 SERVICE_WIDTH = 200
 
 
@@ -79,6 +81,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="judge transcript files step by step and check <name>.expect.toml expectations",
     )
     replay.add_argument("cases", nargs="+", type=Path, metavar="CASE.jsonl")
+    # A replayed transcript is complete and nothing is there to reject: run's options, off.
+    replay.set_defaults(enforce=False, transcript_wait=0.0, tui=False)
     _add_judging_options(replay)
 
     attach = commands.add_parser(
@@ -175,7 +179,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("status", "quarantine", "release", "context"):
         return _control(args)
     if args.command == "attach":
-        return asyncio.run(_attach(args.port))
+        return asyncio.run(attach(args.port))
     if args.command == "install":
         return service.install(args)
     if args.command == "uninstall":
@@ -184,10 +188,11 @@ def main(argv: list[str] | None = None) -> int:
         questions = load_packs(args.pack)
     except (OSError, PackError) as exc:
         raise SystemExit(f"cannot load pack: {exc}") from exc
-    if len(set(args.judge)) != len(args.judge):
-        raise SystemExit(f"--judge given more than once with the same value: {args.judge}")
-    needs_key = any(backend_of(spec) == "jev" for spec in args.judge)
-    api_key = resolve_api_key(os.environ, args.key_file) if needs_key else None
+    try:
+        check_specs(args.judge)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    api_key = resolve_api_key(os.environ, args.key_file) if needs_key(args.judge) else None
     # The Jev judge is handed the key. The claude and codex judges start child processes,
     # which would inherit it from the environment, and they run on the agent's transcripts.
     os.environ.pop("TYPESAFE_API_KEY", None)
@@ -197,36 +202,30 @@ def main(argv: list[str] | None = None) -> int:
     if len(set(names)) != len(names):  # e.g. jev and jev:jev-latest
         asyncio.run(_close(judges))
         raise SystemExit(f"--judge names the same judge more than once: {names}")
-    log_dir = args.log_dir or Path("runs")
-    log_path = args.log or log_dir / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
+    log_path = args.log or (args.log_dir or Path("runs")) / f"{datetime.now():%Y%m%d-%H%M%S}.jsonl"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     # 0600: the log holds every prompt, tool input and tool output of the watched sessions.
     with open(log_path, "a", encoding="utf-8", opener=_private) as log_file:
-        feed = Feed() if args.command == "run" else None
-        tui = args.command == "run" and args.tui
-        # The dashboard owns the terminal; what the console would say is in its feed.
-        printer = Printer(_console(quiet=tui), log_file, feed=feed)
-        enforce = args.command == "run" and args.enforce
-        wait_s = args.transcript_wait if args.command == "run" else 0.0  # replay is complete
+        feed = Feed()
+        # With --tui the dashboard owns the terminal; what the console would say is in its feed.
+        printer = Printer(_console(quiet=args.tui), log_file, feed=feed)
         registry = SurfaceRegistry(
             judges,
             questions,
             printer,
-            enforce=enforce,
-            transcript_wait_s=wait_s,
+            enforce=args.enforce,
+            transcript_wait_s=args.transcript_wait,
             context=(args.context or "").strip() or None,
         )
         if args.command == "replay":
             return asyncio.run(_replay(args.cases, registry, printer, questions))
-        names = ",".join(judge.name for judge in judges)
         banner = (
-            f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={names}"
+            f"jev-watchdog listening on http://{HOST}:{args.port}/hooks · judges={','.join(names)}"
             f" · {len(questions)} questions · {_mode(registry)} · log={log_path}"
         ) + (" · Ctrl-C to stop" if sys.stdout.isatty() else "")
-        info = DaemonInfo(feed.boot, os.getpid(), datetime.now(), args.port, str(log_path))
-        attachment = Attachment(feed, info, socket_path(args.port))
-        foreground = _dashboard(attachment.socket, printer) if tui else None
-        return asyncio.run(_serve(registry, printer, args.port, banner, attachment, foreground))
+        socket = socket_path(args.port)
+        foreground = dashboard(socket, printer, _console()) if args.tui else None
+        return asyncio.run(serve(registry, printer, args.port, banner, feed, socket, foreground))
 
 
 def _console(quiet: bool = False) -> Console:
@@ -251,30 +250,22 @@ def _mode(registry: SurfaceRegistry) -> str:
 
 def _control(args: argparse.Namespace) -> int:
     try:
-        if args.command == "status":
-            status, body = control.call(args.port, "GET", "/quarantine")
-        else:
-            request = {"target": args.target}
-            if args.command == "quarantine":
-                request["reason"] = args.reason
-            elif args.command == "context":
-                request["text"] = args.text or ""
-            status, body = control.call(args.port, "POST", f"/{args.command}", request)
-    except control.Unreachable:
-        print(f"no watchdog listening on port {args.port}", file=sys.stderr)
-        return 1
-    except control.NotAWatchdog:
+        body = asyncio.run(_ask(args))
+    except NotAWatchdog:
         print(f"whatever listens on port {args.port} is not a jev-watchdog", file=sys.stderr)
         return 1
-    # What comes back was put together from labels and reasons the watched agent can choose.
-    if status != 200:
-        print(printable(str(body.get("error", f"HTTP {status}"))), file=sys.stderr)
+    except Unreachable:
+        print(f"no watchdog listening on port {args.port}", file=sys.stderr)
         return 1
+    except Refused as exc:
+        print(printable(str(exc)), file=sys.stderr)
+        return 1
+    # What comes back was put together from labels and reasons the watched agent can choose.
     if args.command == "status":
-        for entry in body["quarantined"]:
+        for entry in body:
             line = f"{entry['target']}  {entry['source']}  {entry['at']}  {entry['reason']}"
             print(printable(line))
-        if not body["quarantined"]:
+        if not body:
             print("nothing is quarantined")
     elif args.command == "quarantine":
         print(printable(f"quarantined {body['target']}: {body['reason']}"))
@@ -283,6 +274,17 @@ def _control(args: argparse.Namespace) -> int:
     else:
         print(printable(f"released {body['target']}"))
     return 0
+
+
+async def _ask(args: argparse.Namespace) -> dict | list[dict]:
+    async with Client.on_port(args.port) as client:
+        if args.command == "status":
+            return await client.quarantined()
+        if args.command == "quarantine":
+            return await client.quarantine(args.target, args.reason)
+        if args.command == "context":
+            return await client.context(args.target, args.text or "")
+        return await client.release(args.target)
 
 
 async def _replay(
@@ -308,114 +310,6 @@ async def _replay(
 async def _close(judges: list[Judge]) -> None:
     for judge in judges:
         await judge.aclose()
-
-
-@dataclass(frozen=True)
-class Attachment:
-    """What `attach` needs of a running watchdog, and the socket it is offered on."""
-
-    feed: Feed
-    info: DaemonInfo
-    socket: Path
-
-
-async def _serve(
-    registry: SurfaceRegistry,
-    printer: Printer,
-    port: int,
-    banner: str,
-    attachment: Attachment | None = None,
-    foreground: Callable[[asyncio.Event], Awaitable[None]] | None = None,
-) -> int:
-    """Listen until a signal, or for as long as `foreground` (the dashboard) runs."""
-    runner = web.AppRunner(create_app(registry), access_log=None)
-    await runner.setup()
-    private = None  # the same app plus /state and /events, on the socket only
-    listening = False
-    try:
-        try:
-            await web.TCPSite(runner, HOST, port).start()
-        except OSError as exc:
-            print(f"cannot listen on {HOST}:{port}: {exc}", file=sys.stderr)
-            return 1
-        listening = True
-        if attachment is not None:
-            private = web.AppRunner(
-                create_app(registry, attachment.feed, attachment.info), access_log=None
-            )
-            await private.setup()
-            try:
-                await _offer(private, attachment.socket)
-            except OSError as exc:
-                print(f"attach unavailable: {attachment.socket}: {exc}", file=sys.stderr)
-                await private.cleanup()
-                private = None
-        if foreground is not None and private is None:
-            return 1  # a dashboard with nothing to read
-        printer.banner(banner)
-        stop = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(signum, stop.set)
-        await (stop.wait() if foreground is None else foreground(stop))
-        return 0
-    finally:
-        if attachment is not None:
-            attachment.feed.close()  # or the open /events streams hold the cleanup up
-        if private is not None:
-            await private.cleanup()
-            attachment.socket.unlink(missing_ok=True)
-        await registry.shutdown()
-        await runner.cleanup()
-        await _close(registry.judges)
-        if listening:
-            printer.global_summary(registry.stats, registry.summaries())
-
-
-def _dashboard(socket: Path, printer: Printer, **app_options):
-    """`run --tui`: the dashboard of `attach`, on this process's own socket."""
-    from jev_watchdog.tui import WatchdogApp  # textual is only needed by whoever looks
-
-    async def foreground(stop: asyncio.Event) -> None:
-        client = AttachClient(socket)
-        app = WatchdogApp(client, owns_watchdog=True)
-        showing = asyncio.create_task(app.run_async(**app_options))
-        stopped = asyncio.create_task(stop.wait())
-        try:
-            await asyncio.wait({showing, stopped}, return_when=asyncio.FIRST_COMPLETED)
-            if not showing.done():  # SIGTERM: the terminal has to be given back first
-                app.exit()
-            await showing
-        finally:
-            stopped.cancel()
-            await client.aclose()
-            printer.console = _console()  # for the closing summary
-
-    return foreground
-
-
-async def _attach(port: int) -> int:
-    from jev_watchdog.tui import WatchdogApp
-
-    client = AttachClient(socket_path(port))
-    try:
-        try:
-            await client.state()
-        except AttachError, ControlError:  # nothing there, or something that is not one
-            print(f"no watchdog to attach to on port {port}", file=sys.stderr)
-            return 1
-        await WatchdogApp(client).run_async()
-        return 0
-    finally:
-        await client.aclose()
-
-
-async def _offer(runner: web.AppRunner, path: Path) -> None:
-    # This process holds the port, so a file at the port's socket path is a dead watchdog's.
-    private_dir(path.parent)
-    path.unlink(missing_ok=True)
-    await web.UnixSite(runner, str(path)).start()
-    path.chmod(0o600)
 
 
 if __name__ == "__main__":

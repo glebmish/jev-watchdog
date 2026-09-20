@@ -1,41 +1,28 @@
-"""The hook endpoint, the control endpoints behind
-`jev-watchdog status|quarantine|release|context`, and what `attach` reads: /state and /events.
+"""The hook endpoint, and the control endpoints behind
+`jev-watchdog status|quarantine|release|context`.
 
 Hooks are answered at once and judged in the background. The answer is an empty 200, except
 for a PreToolUse of a quarantined thread, which gets a deny.
 
 Nothing here authenticates the caller, but a browser must not be one: any page the operator
 has open can POST to 127.0.0.1, and a DNS-rebinding page can read the answers too.
-
-/state and /events exist only in an app that is given a feed. They carry what every watched
-session is doing, so the CLI serves that app on a private unix socket and not on the port.
 """
 
-import asyncio
 import json
 from collections.abc import Callable
 
 from aiohttp import web
 
-from jev_watchdog.feed import Feed
-from jev_watchdog.quarantine import Quarantine
-from jev_watchdog.state import DaemonInfo, recent_surfaces, snapshot
 from jev_watchdog.surfaces import SurfaceRegistry, TargetError
-from jev_watchdog.transcript import SurfaceKey
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
 # A hook carries the whole tool input and output (a large Write, a long Bash log). Over
 # aiohttp's 1 MiB default the 413 is a non-2xx, which Claude Code does not block on: the
 # large tool calls of a quarantined thread would go through, and never be judged or logged.
 MAX_BODY_BYTES = 64 * 2**20
-MAX_TIMELINE_MINUTES = 7 * 24 * 60
-MAX_TIMELINE_BUCKETS = 400
-KEEPALIVE_S = 15.0  # a comment on an idle /events stream, so a dead follower is noticed
 
 
-def create_app(
-    registry: SurfaceRegistry, feed: Feed | None = None, info: DaemonInfo | None = None
-) -> web.Application:
+def create_app(registry: SurfaceRegistry) -> web.Application:
     @web.middleware
     async def local_clients_only(request: web.Request, handler) -> web.StreamResponse:
         refusal = _refusal(request)
@@ -68,113 +55,38 @@ def create_app(
         entries = [entry.as_dict() for entry in registry.quarantines.all()]
         return web.json_response({"quarantined": entries})
 
-    def control(action: Callable[[dict], Quarantine]):
+    def control(action: Callable[[dict], dict], fields: tuple[str, ...] = ("target",)):
         async def handler(request: web.Request) -> web.Response:
             try:
                 body = json.loads(await request.read())
             except ValueError:
                 body = None
-            if not isinstance(body, dict) or not isinstance(body.get("target"), str):
-                return web.json_response({"error": 'expected {"target": "..."}'}, status=400)
+            if not isinstance(body, dict) or not all(isinstance(body.get(f), str) for f in fields):
+                expected = json.dumps(dict.fromkeys(fields, "..."))
+                return web.json_response({"error": f"expected {expected}"}, status=400)
             try:
-                entry = action(body)
+                return web.json_response(action(body))
             except TargetError as exc:
                 return web.json_response({"error": exc.message}, status=exc.status)
-            return web.json_response(entry.as_dict())
 
         return handler
 
-    async def context(request: web.Request) -> web.Response:
-        try:
-            body = json.loads(await request.read())
-        except ValueError:
-            body = None
-        if not isinstance(body, dict) or not all(
-            isinstance(body.get(key), str) for key in ("target", "text")
-        ):
-            return web.json_response(
-                {"error": 'expected {"target": "...", "text": "..."}'}, status=400
-            )
-        try:
-            label = registry.set_context(body["target"], body["text"])
-        except TargetError as exc:
-            return web.json_response({"error": exc.message}, status=exc.status)
-        return web.json_response({"target": label, "context": body["text"].strip()})
+    def quarantine(body: dict) -> dict:
+        return registry.quarantine(body["target"], str(body.get("reason") or "manual")).as_dict()
 
-    async def state(request: web.Request) -> web.Response:
-        return web.json_response(snapshot(registry, info, registry.printer.clock()))
-
-    async def history(request: web.Request) -> web.Response:
-        key = SurfaceKey(request.query.get("session_id", ""), request.query.get("agent_id", ""))
-        if key not in registry.surfaces:
-            return web.json_response({"error": "no such agent thread"}, status=404)
-        return web.json_response(registry.history.series(key))
-
-    async def timeline(request: web.Request) -> web.Response:
-        try:
-            minutes = int(request.query.get("minutes", "60"))
-            buckets = int(request.query.get("buckets", "60"))
-        except ValueError:
-            return web.json_response({"error": "minutes and buckets are numbers"}, status=400)
-        if not (0 < minutes <= MAX_TIMELINE_MINUTES and 0 < buckets <= MAX_TIMELINE_BUCKETS):
-            return web.json_response({"error": "minutes or buckets out of range"}, status=400)
-        judge = request.query.get("judge") or registry.judges[0].name
-        # Oldest first, like the dashboard's thread list.
-        threads = [(s.key, s.label) for s in reversed(recent_surfaces(registry))]
-        now = registry.printer.clock()
-        return web.json_response(registry.history.timeline(threads, judge, now, minutes, buckets))
-
-    async def events(request: web.Request) -> web.StreamResponse:
-        try:
-            since = int(request.query.get("since", "0"))
-        except ValueError:
-            return web.json_response({"error": "since must be a record number"}, status=400)
-        response = web.StreamResponse(
-            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"}
-        )
-        await response.prepare(request)
-        subscription = feed.subscribe(since)
-        try:
-            await response.write(_sse("hello", {"boot": feed.boot}))
-            for record in subscription.backlog:
-                await response.write(_sse("record", record))
-            while True:
-                try:
-                    record = await asyncio.wait_for(subscription.queue.get(), KEEPALIVE_S)
-                except TimeoutError:
-                    await response.write(b": keepalive\n\n")
-                    continue
-                if record is None:  # dropped for falling behind, or the watchdog is stopping
-                    break
-                await response.write(_sse("record", record))
-        except ConnectionError:
-            pass  # the follower went away
-        finally:
-            feed.unsubscribe(subscription)
-        return response
+    def context(body: dict) -> dict:
+        label = registry.set_context(body["target"], body["text"])
+        return {"target": label, "context": body["text"].strip()}
 
     app = web.Application(middlewares=[local_clients_only], client_max_size=MAX_BODY_BYTES)
     app.router.add_post("/hooks", hooks)
     app.router.add_get("/quarantine", listing)
+    app.router.add_post("/quarantine", control(quarantine))
     app.router.add_post(
-        "/quarantine",
-        control(
-            lambda body: registry.quarantine(body["target"], str(body.get("reason") or "manual"))
-        ),
+        "/release", control(lambda body: registry.release(body["target"]).as_dict())
     )
-    app.router.add_post("/release", control(lambda body: registry.release(body["target"])))
-    app.router.add_post("/context", context)
-    if feed is not None and info is not None:
-        app.router.add_get("/state", state)
-        app.router.add_get("/events", events)
-        app.router.add_get("/history", history)
-        app.router.add_get("/timeline", timeline)
+    app.router.add_post("/context", control(context, fields=("target", "text")))
     return app
-
-
-def _sse(name: str, data: dict) -> bytes:
-    record_id = f"id: {data['seq']}\n" if "seq" in data else ""
-    return f"event: {name}\n{record_id}data: {json.dumps(data, ensure_ascii=False)}\n\n".encode()
 
 
 def _refusal(request: web.Request) -> tuple[int, str] | None:

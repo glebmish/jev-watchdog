@@ -58,3 +58,12 @@ def make_judge(spec: str, config: JudgeConfig) -> Judge:
     except KeyError:
         raise ValueError(f"unknown judge {name!r}; available: {sorted(JUDGES)}") from None
     return factory(replace(config, model=model or None))
+
+
+def needs_key(specs: list[str]) -> bool:
+    return any(backend_of(spec) == "jev" for spec in specs)
+
+
+def check_specs(specs: list[str]) -> None:
+    if len(set(specs)) != len(specs):
+        raise ValueError(f"--judge given more than once with the same value: {specs}")

@@ -124,6 +124,7 @@ class SurfaceRegistry:
         self.judges = judges
         self.questions = questions
         self.printer = printer
+        self.started_at = printer.clock()
         self.stats = stats or GlobalStats()
         for judge in judges:
             self.stats.judge(judge.name)  # table rows in the order given
@@ -436,7 +437,6 @@ class SurfaceRegistry:
             judge.name,
             self.printer.clock(),
             self.decider.evidence(surface.key, judge.name),
-            len(flagged),
             folded=job.event.get("hook_event_name") in TOOL_EVENTS,
         )
         if trip is not None:

@@ -17,10 +17,9 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from jev_watchdog.judge.registry import backend_of
+from jev_watchdog.judge.registry import check_specs, needs_key
 from jev_watchdog.pack import PackError, load_packs
 from jev_watchdog.paths import private_dir, socket_path, state_dir
-from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S
 
 LABEL = "io.github.glebmish.jev-watchdog"
 UNIT_NAME = "jev-watchdog.service"
@@ -39,11 +38,9 @@ class ServiceError(Exception):
 
 def run_arguments(args: argparse.Namespace, state: Path) -> list[str]:
     """The `run` command line of the parsed `install` options, good from any directory."""
-    arguments = ["run", "--port", str(args.port)]
+    arguments = ["run", "--port", str(args.port), "--transcript-wait", str(args.transcript_wait)]
     if args.enforce:
         arguments.append("--enforce")
-    if args.transcript_wait != TRANSCRIPT_WAIT_S:
-        arguments += ["--transcript-wait", str(args.transcript_wait)]
     for spec in args.judge:
         arguments += ["--judge", spec]
     if args.claude_thinking:
@@ -52,7 +49,7 @@ def run_arguments(args: argparse.Namespace, state: Path) -> list[str]:
         arguments += ["--pack", str(pack.resolve())]
     if args.context:
         arguments += ["--context", args.context]
-    if _needs_key(args):
+    if needs_key(args.judge):
         arguments += ["--key-file", str(args.key_file.resolve())]
     if args.log is not None:
         arguments += ["--log", str(args.log.resolve())]
@@ -178,10 +175,10 @@ def uninstall(
     if platform == "darwin":
         target = f"gui/{os.getuid() if uid is None else uid}/{LABEL}"
         _manager(run, out, ["launchctl", "bootout", target], may_fail=True)  # not loaded: fine
-        unit.unlink()
     else:
         _manager(run, out, ["systemctl", "--user", "disable", "--now", UNIT_NAME], may_fail=True)
-        unit.unlink()
+    unit.unlink()
+    if platform != "darwin":
         _manager(run, out, ["systemctl", "--user", "daemon-reload"], may_fail=True)
     out(f"removed {unit}; run logs and output are kept")
     return 0
@@ -195,9 +192,11 @@ def _check(args: argparse.Namespace, env: Mapping[str, str], platform: str) -> N
         load_packs(args.pack)
     except (OSError, PackError) as exc:
         raise ServiceError(f"cannot load pack: {exc}") from exc
-    if len(set(args.judge)) != len(args.judge):
-        raise ServiceError(f"--judge given more than once with the same value: {args.judge}")
-    if _needs_key(args):
+    try:
+        check_specs(args.judge)
+    except ValueError as exc:
+        raise ServiceError(str(exc)) from exc
+    if needs_key(args.judge):
         key_file = args.key_file
         if not (key_file.is_file() and key_file.read_text(encoding="utf-8").strip()):
             seen = (
@@ -209,15 +208,11 @@ def _check(args: argparse.Namespace, env: Mapping[str, str], platform: str) -> N
             )
 
 
-def _needs_key(args: argparse.Namespace) -> bool:
-    return any(backend_of(spec) == "jev" for spec in args.judge)
-
-
 def _bootstrap(run: Run, out: Callable[[str], None], command: list[str], replacing: bool) -> bool:
     tries = BOOTSTRAP_TRIES if replacing else 1
     for attempt in range(tries):
         last = attempt == tries - 1
-        if _manager(run, out, command, may_fail=not last, quiet=not last):
+        if _manager(run, out, command, may_fail=not last):
             return True
         if not last:
             time.sleep(BOOTSTRAP_PAUSE_S)
@@ -229,12 +224,11 @@ def _manager(
     out: Callable[[str], None],
     command: list[str],
     may_fail: bool = False,
-    quiet: bool = False,
 ) -> bool:
     done = run(command, capture_output=True, text=True, check=False)
     if done.returncode == 0:
         return True
-    if not (may_fail or quiet):
+    if not may_fail:
         said = (done.stderr or done.stdout or "").strip()
         out(f"`{' '.join(command)}` failed ({done.returncode}): {said}")
     return False

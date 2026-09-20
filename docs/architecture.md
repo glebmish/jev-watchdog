@@ -8,7 +8,7 @@ Modules are under `src/jev_watchdog/`; names are given so that every statement c
 `jev-watchdog run` is one asyncio process: an aiohttp application (`server.create_app`) with
 all state in memory in one `SurfaceRegistry`. It binds `127.0.0.1` only: `HOST` in `cli.py` is
 a constant, and `--port` (default 8787) is the only thing that moves. Next to the port it
-listens on a private unix socket, where `attach` reads `/state` and `/events`. `install` makes
+listens on a private unix socket, where `attach` reads what it draws (`state.add_routes`). `install` makes
 that same `run` a launchd agent or systemd user unit; nothing in the process daemonizes. The plugin
 (`plugin/hooks/hooks.json`) registers ten hooks, all posting to `http://127.0.0.1:8787/hooks`.
 Nine are `http` hooks with a 2 s timeout: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
@@ -22,6 +22,27 @@ That gate (`SurfaceRegistry._gate`) is a dictionary lookup in `Quarantines.block
 awaits nothing. A judging event is answered once its transcript is snapshotted (one file read,
 in a thread). The rest runs in background tasks: the transcript wait, judge calls, statistics,
 printing, the CUSUM and the quarantine itself.
+
+## Layers
+
+Three programs share the package, and each can be read without the ones below it in this list.
+
+1. **The watchdog core**: `transcript`, `pack`, `judge/*`, `stats`, `decide`, `quarantine`,
+   `surfaces`, `server`, `replay`. A hook comes in, is judged, evidence accumulates, a thread
+   is quarantined, `PreToolUse` is denied. It knows nothing of dashboards or services.
+2. **What is shown**: `printer`, `feed`, `history`. The core touches this layer at two seams
+   and nowhere else: `Printer._emit` (every line, to the console, the run log and the feed)
+   and `History.record` / `History.mark` (called in `SurfaceRegistry._record`, `_add`,
+   `release` and `_tripped`). Neither decides anything or is read back by the core.
+3. **Looking and running**: `state` (the read routes), `client`, `tui` + `draw` (the
+   dashboard), `serve` (the two sites), `service` (launchd / systemd), `paths`. `client` imports
+   nothing from the package; `tui` and `draw` see only JSON, and import `printer` for the one
+   line renderer (`render_line`, `printable`) and `feed` for the ring's size. `service` imports only `pack`,
+   `paths` and `judge/registry`, to check options the way `run` would.
+
+`cli` is the composition root: it parses, builds a registry and hands it to `serve` or
+`replay`. Leaves that import nothing from the package: `transcript`, `pack`, `feed`, `paths`,
+`client`.
 
 ## Pipeline
 
@@ -57,31 +78,35 @@ SurfaceRegistry.handle                           SurfaceRegistry.quarantine | re
   |
 replay.run_cases: the same handle(), synthetic payloads over transcript prefixes, no wait
 
-Printer._emit: one display record per line --> console (render_line), Feed (ring of 2000)
-                                                                          |
-cli._serve: TCPSite 127.0.0.1:<port>   create_app(registry)               |
-            UnixSite attach-<port>.sock, 0600: create_app(registry, feed, info)
-                 GET /state   state.snapshot: threads, statistics, evidence, quarantines
-                 GET /events  SSE: hello {boot}, backlog after ?since, live records
+Printer._emit: one display record per line --> console (render_line), Feed (ring of 2000),
+                                                 run log (the fuller record)
+serve.serve: TCPSite 127.0.0.1:<port>          server.create_app(registry)
+             UnixSite attach-<port>.sock, 0600: the same app + state.add_routes(app, registry, feed)
+                 GET /state     snapshot: threads, statistics, evidence, quarantines
+                 GET /records   the feed after ?since, with the process's boot id
                  GET /history   History.series: one thread's evidence per verdict, marks
                  GET /timeline  History.timeline: every thread, bucketed on the server
                       ^
-attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own socket)
-                          x / r / c --> POST /quarantine | /release | /context, same socket
+client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tui` on its own socket)
+   on_socket | on_port    x / r / c --> POST /quarantine | /release | /context, same socket
+        ^
+        +-- cli status | quarantine | release | context, over the port
 ```
 
 ## Components
 
 | Module | Owns |
 |---|---|
-| `cli` | Arguments, API key, run log (0600), the two sites, `run` / `replay` / `attach` / control entry points. |
-| `server` | aiohttp app: `/hooks`, control endpoints, `/state` and `/events` when given a feed, request guard, body cap. |
-| `feed` | Ring buffer of display records with a rising `seq`; subscribers, the slow ones dropped. |
-| `state` | `snapshot`: the registry as one JSON document, newest 200 threads. |
-| `history` | Last 500 verdicts per thread and judge with the evidence they left; quarantine, release and trip marks; `series` and the bucketed `timeline`. Decides nothing. |
+| `cli` | Arguments, API key, run log (0600), building the registry, dispatch to `serve`, `replay`, `service` and the control calls. |
+| `serve` | The two sites (port, private socket), signals, shutdown order; `dashboard` for `run --tui`, `attach`. |
+| `server` | aiohttp app of the port: `/hooks`, control endpoints, request guard, body cap. Knows nothing of the dashboard. |
+| `state` | What a dashboard reads and its routes (`add_routes`): `snapshot`, `/records`, `/history`, `/timeline`. |
+| `feed` | Ring buffer of display records with a rising `seq` and the process's `boot` id. |
+| `history` | Last 500 verdicts per thread and judge as shares of each rule's limit; quarantine, release and trip marks; `series` and the bucketed `timeline`. Decides nothing. |
 | `paths` | State directory (`$XDG_STATE_HOME/jev-watchdog`), socket path per port, 0700 directory. |
-| `attach` | `AttachClient`: state, events (SSE) and control over the socket. |
-| `tui` | `WatchdogApp` (Textual): threads, one thread's statistics, feed, control keys. |
+| `client` | `Client`: the one HTTP client, `on_port` for the control subcommands, `on_socket` for the dashboard. |
+| `tui` | `WatchdogApp` (Textual): the widgets, one polling loop, the keys. |
+| `draw` | What the dashboard shows, as pure functions from the watchdog's dicts to `Text` and plots. |
 | `service` | `install` / `uninstall`: launchd plist, systemd unit, absolute `run` arguments. |
 | `surfaces` | `SurfaceRegistry`: routing, gate, transcript wait, queues, workers, trips. |
 | `transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `tool_result_end`. |
@@ -90,7 +115,6 @@ attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own sock
 | `pack` | `Question` and the validating TOML pack loader; context wording. |
 | `stats` | Read-only accumulators: counts, EWMA, streaks, latency, lag, tokens, cost. |
 | `printer` | Display records, `render_line` (console and dashboard), JSONL run log, feed; `printable` makes control characters visible. |
-| `control` | HTTP client of the control subcommands; no proxy; spots a non-watchdog. |
 | `replay` | Cuts transcripts into steps, feeds `handle`, checks `.expect.toml`. |
 | `judge/base` | `Judge` protocol, `JudgeRequest`, `Verdict`, shared payload and answer schema. |
 | `judge/registry` | `--judge` spec to judge (`JUDGES`); lazy backend imports. |
@@ -124,36 +148,37 @@ attach.AttachClient --+-- tui.WatchdogApp (`attach`; `run --tui` on its own sock
 - **Scope.** `Quarantines.blocking` returns the thread's own entry, else its session's
   main-thread entry: a quarantined main thread blocks its subagents, a subagent only itself.
 - **One display record, three readers.** `Printer._emit` builds what a line shows
-  (`display_record`), prints `render_line` of it, and publishes a copy with every text cut at
-  `MESSAGE_LIMIT` (500) to the `Feed`. The run log is written separately and keeps the full
-  payloads, so the feed's ring stays small whatever a hook carries.
-- **The feed never holds up a hook.** `Feed.publish` is synchronous and only `put_nowait`s. A
-  subscriber whose queue (1000) is full is removed and its stream ended with `None`; the
-  dashboard comes back with `?since=<last seq>`. `Feed.close()` runs first at shutdown, or the
-  open `/events` handlers would hold `runner.cleanup()` up; a subscription made after it ends
-  at once, for the `/events` that was accepted just before.
-- **Session content is not on the port.** `/state` and `/events` are routed only in the app
-  that `cli._serve` puts on the unix socket (0600, in a 0700 directory). The TCP port is bound
-  first; holding it, the process owns that port's socket path and replaces a stale file. On a
-  unix connection `server._refusal` skips the `Host` check (no port, and no page can open a
-  socket file) and keeps the `Origin` and content-type checks. Without a socket `run` carries
-  on and says `attach unavailable`; `run --tui` exits 1.
+  (`display_record`), prints `render_line` of it, publishes a copy with every text cut at
+  `MESSAGE_LIMIT` (500) to the `Feed`, and writes the run log, which gets the fuller record
+  (the hook payload, the whole verdict) where there is one. The feed's ring stays small
+  whatever a hook carries.
+- **The feed never holds up a hook.** `Feed.publish` appends to a ring and nothing else: there
+  are no subscribers to serve. A dashboard asks `/records?since=<its last seq>`.
+- **Session content is not on the port.** `state.add_routes` is called only for the app that
+  `serve.serve` puts on the unix socket (0600, in a 0700 directory); `server.create_app` has no
+  such routes to switch on. The TCP port is bound first; holding it, the process owns that
+  port's socket path and replaces a stale file. On a unix connection `server._refusal` skips
+  the `Host` check (no port, and no page can open a socket file) and keeps the `Origin` and
+  content-type checks. Without a socket `run` carries on and says `attach unavailable`;
+  `run --tui` exits 1.
 - **Charts are drawn from `History`, not from the feed.** `SurfaceRegistry._record` stores the
   evidence each verdict left (`folded` marks tool events, the only ones that move it), and
   `_add`, `release` and a non-enforced `_tripped` store marks; a release also appends an empty
   point per judge, because `Decider.reset` starts every judge's evidence over. `/timeline` is
   bucketed on the server (at most `MAX_TIMELINE_BUCKETS` cells for 200 threads), and a cell is
-  the worst `evidence / limit` of its points. `History` keeps the `THREADS` (200) it heard of
+  the worst share of a limit among its points; `History` stores shares, so no reader divides. `History` keeps the `THREADS` (200) it heard of
   last and drops the rest, points and marks: the registry itself never forgets a thread, but
   this is what grows per verdict.
-- **The dashboard computes nothing.** Statistics and evidence come from `/state`, asked again
-  at most every `TICK_S` (0.25 s) while records arrive and every `IDLE_REFRESH_S` (2 s)
-  otherwise. A new `boot` in `hello` is a restarted watchdog: the feed is cleared and read
-  from 0. Thread rows are updated in place, oldest first, so none moves under the cursor.
-  Widgets are kept from `on_mount`: `query_one` searches the screen on top, and state keeps
-  arriving while the question of `x` or `c` is open. The state loop survives everything but
-  cancellation: a refusal (an older watchdog may not know a chart's request) or an answer it
-  cannot draw is a notification, once, and the next tick asks again.
+- **The dashboard polls, in one loop** (`tui.WatchdogApp._watch`): `/records` every `TICK_S`
+  (0.25 s), and `/state` plus the chart that is up when records came, a key was pressed or
+  `IDLE_REFRESH_S` (2 s) passed. A `boot` other than the last one is a restarted watchdog: the
+  feed is cleared and read from 0. "Live" is whether the last poll got an answer. The loop
+  survives everything but cancellation: a refusal (an older watchdog may not know a chart's
+  request) or an answer it cannot draw is a notification, once, and the next tick asks again.
+  Thread rows are updated in place, oldest first, and only when they changed, so none moves
+  under the cursor and an idle screen stays idle. Widgets are kept from `on_mount`: `query_one`
+  searches the screen on top, and state keeps arriving while the question of `x` or `c` is
+  open. It computes nothing: `draw.py` turns the watchdog's dicts into `Text` and plots.
 - **Agent-chosen text reaches the dashboard as `Text` through `printable`**, border titles
   through `textual.markup.escape`, notifications with `markup=False`.
 - **A unit never holds the key.** `service.install` checks what `run` would refuse (packs,

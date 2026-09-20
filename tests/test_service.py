@@ -57,7 +57,7 @@ def test_run_arguments_are_absolute_and_log_to_the_state_dir(tmp_path, monkeypat
     args = parsed("--judge", "fake", "--pack", "pack.toml", "--pack", "packs/canary.toml",
                   "--enforce", "--context", "a known upload", "--port", "9000")  # fmt: skip
     assert run_arguments(args, Path("/state")) == [
-        "run", "--port", "9000", "--enforce", "--judge", "fake",
+        "run", "--port", "9000", "--transcript-wait", "2.0", "--enforce", "--judge", "fake",
         "--pack", str(tmp_path / "pack.toml"), "--pack", str(tmp_path / "packs/canary.toml"),
         "--context", "a known upload", "--log-dir", "/state/runs",
     ]  # fmt: skip

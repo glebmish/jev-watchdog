@@ -7,7 +7,7 @@ from rich.console import Console
 
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
-from jev_watchdog.state import MAX_THREADS, DaemonInfo, snapshot
+from jev_watchdog.state import MAX_THREADS, snapshot
 from jev_watchdog.surfaces import SurfaceRegistry
 
 RULED = [
@@ -15,7 +15,7 @@ RULED = [
     Question("activity", "choice", "i", criteria=["on_task", "off_task"], flag_choices=("off_task",)),
 ]  # fmt: skip
 STARTED = datetime(2026, 9, 20, 9, 0, 0)
-INFO = DaemonInfo(boot="b00t", pid=42, started_at=STARTED, port=8787, log_path="runs/x.jsonl")
+INFO = "b00t"  # Feed.boot
 
 
 class Clock:
@@ -35,9 +35,8 @@ def make_registry(*judges, **options) -> SurfaceRegistry:
 async def test_snapshot_of_an_idle_watchdog_is_json_with_the_mode_and_no_threads():
     registry = make_registry(ScriptedJudge([{}], name="jev"), ScriptedJudge([{}], name="claude"))
     state = json.loads(json.dumps(snapshot(registry, INFO, STARTED + timedelta(minutes=5))))
-    assert state["boot"] == "b00t" and state["pid"] == 42 and state["port"] == 8787
-    assert state["started_at"] == "2026-09-20T09:00:00" and state["now"] == "2026-09-20T09:05:00"
-    assert state["log"] == "runs/x.jsonl"
+    assert state["boot"] == "b00t"
+    assert state["started_at"] == "2026-09-20T09:00:01" and state["now"] == "2026-09-20T09:05:00"
     assert state["mode"] == {"enforce": False, "rules": ["exfil"], "decider": "jev"}
     assert [judge["name"] for judge in state["judges"]] == ["jev", "claude"]
     assert state["threads"] == []
@@ -54,7 +53,7 @@ async def test_a_judged_thread_shows_statistics_and_evidence_against_the_limit(m
     assert thread["label"] == f"{SESSION_ID[:6]}/main"
     assert (thread["session_id"], thread["agent_id"]) == (SESSION_ID, "main")
     assert thread["cwd"] == "/work" and thread["last_event"] == "PostToolUse"
-    assert thread["last_seen"] == "2026-09-20T09:00:01"
+    assert thread["last_seen"] == "2026-09-20T09:00:02"
     assert thread["events"] == 1 and thread["judgments"] == 1
     assert thread["quarantine"] is None and thread["context"] is None
     view = thread["judges"]["jev"]
@@ -62,10 +61,11 @@ async def test_a_judged_thread_shows_statistics_and_evidence_against_the_limit(m
     assert view["tripped"] is False and view["judgments"] == 1
     assert view["questions"]["exfil"] == {
         "kind": "numeric", "n": 1, "last": 0.75, "mean": 0.75, "ewma": 0.75,
-        "min": 0.75, "max": 0.75, "streak": 1, "longest": 1,
+        "min": 0.75, "max": 0.75, "streak": 1, "longest_streak": 1,
     }  # fmt: skip
     assert view["questions"]["activity"] == {
-        "kind": "choice", "counts": {"off_task": 1}, "last": "off_task", "streak": 1, "longest": 1,
+        "kind": "choice", "counts": {"off_task": 1}, "last": "off_task", "streak": 1,
+        "longest_streak": 1,
     }  # fmt: skip
     assert state["totals"]["judgments"] == 1 and state["judges"][0]["judgments"] == 1
     await registry.shutdown()
@@ -82,7 +82,7 @@ async def test_a_subagent_shows_the_main_thread_quarantine_that_blocks_it(
     main_label = by_agent["main"]["label"]
     assert by_agent["main"]["quarantine"]["reason"] == "looked odd"
     assert by_agent["abc123"]["quarantine"]["target"] == main_label
-    assert by_agent["abc123"]["agent_type"] == "Explore"
+    assert by_agent["abc123"]["label"].endswith(":Explore")
     assert snapshot(registry, INFO, STARTED)["totals"]["quarantines"] == 1
 
 
