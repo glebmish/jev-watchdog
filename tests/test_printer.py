@@ -224,3 +224,18 @@ def test_quarantine_lines_and_log_records():
         ("released", None),
     ]
     assert records(log)[2]["payload"] == payload
+
+
+class FullDisk(io.StringIO):
+    def write(self, text):
+        raise OSError(28, "No space left on device")
+
+
+def test_a_failing_run_log_is_reported_once_and_never_raises():
+    """printer calls sit on the hook path: raising there turned a deny into an empty 200."""
+    out = io.StringIO()
+    printer = Printer(Console(file=out, width=200, color_system=None), FullDisk())
+    printer.note("s/main", "first")
+    printer.note("s/main", "second")
+    assert out.getvalue().count("No space left on device") == 1
+    assert "first" in out.getvalue() and "second" in out.getvalue()

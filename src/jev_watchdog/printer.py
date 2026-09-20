@@ -136,8 +136,14 @@ class Printer:
         if self.log_file is None:
             return
         record = {"ts": self.clock().isoformat(timespec="seconds"), "kind": kind, "surface": label}
-        self.log_file.write(json.dumps(record | data, ensure_ascii=False) + "\n")
-        self.log_file.flush()
+        try:
+            self.log_file.write(json.dumps(record | data, ensure_ascii=False) + "\n")
+            self.log_file.flush()
+        except OSError as exc:
+            # Printer calls sit on the hook path and in the judge workers: a full disk must
+            # not turn a deny into a handler error. Say it once and watch on without a log.
+            self.log_file = None
+            self.console.print(Text(f"run log failed, no longer written: {exc}", style="bold red"))
 
 
 def _questions_table(label: str, judge: str, stats: JudgeSurfaceStats) -> Table:

@@ -91,6 +91,8 @@ def _question(qid: str, table: dict) -> Question:
     flag_below = table.get("flag_below")
     if flag_threshold is not None and flag_below is not None:
         raise PackError(f"{qid}: set at most one of flag_threshold / flag_below")
+    if not all(value is None or _is_number(value) for value in (flag_threshold, flag_below)):
+        raise PackError(f"{qid}: flag_threshold / flag_below must be a number")
 
     flag_choices = tuple(table.get("flag_choices", ()))
     if flag_choices and (kind != "choice" or not set(flag_choices) <= set(criteria)):

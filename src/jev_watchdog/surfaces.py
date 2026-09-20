@@ -263,8 +263,8 @@ class SurfaceRegistry:
         surface.backlog += 1
         surface.intake.put_nowait(pending)
         if surface.intake_worker is None or surface.intake_worker.done():
-            surface.intake_worker = asyncio.create_task(
-                self._take_in(surface), name=f"intake:{surface.label}"
+            surface.intake_worker = self._start(
+                surface, self._take_in(surface), f"intake:{surface.label}"
             )
 
     async def _take_in(self, surface: Surface) -> None:
@@ -368,10 +368,23 @@ class SurfaceRegistry:
             queue = surface.queues.setdefault(judge.name, asyncio.Queue())
             worker = surface.workers.get(judge.name)
             if worker is None or worker.done():
-                surface.workers[judge.name] = asyncio.create_task(
-                    self._work(surface, judge, queue), name=f"{judge.name}:{surface.label}"
+                surface.workers[judge.name] = self._start(
+                    surface, self._work(surface, judge, queue), f"{judge.name}:{surface.label}"
                 )
             queue.put_nowait(job)
+
+    def _start(self, surface: Surface, work, name: str) -> asyncio.Task:
+        def report_death(task: asyncio.Task) -> None:
+            # Nobody awaits these tasks, so without this a bug that ends one is silent and
+            # the thread just stops being judged.
+            if not task.cancelled() and task.exception() is not None:
+                surface.stats.record_error("worker")
+                self.stats.record_error("worker")
+                self.printer.error(surface.label, "worker", f"{name} died: {task.exception()!r}")
+
+        task = asyncio.create_task(work, name=name)
+        task.add_done_callback(report_death)
+        return task
 
     async def _work(self, surface: Surface, judge: Judge, queue: asyncio.Queue) -> None:
         while True:
@@ -390,22 +403,24 @@ class SurfaceRegistry:
         request = JudgeRequest(surface.key, job.event, job.transcript_lines, questions, job.context)
         try:
             verdict = await judge.judge(request)
+            self._record(surface, judge, job, verdict)
         except JudgeError as exc:
             self._judge_error(surface, judge, exc.kind, exc.message)
-        except Exception as exc:  # noqa: BLE001 - a judge bug must not kill the worker
+        except Exception as exc:  # noqa: BLE001 - no bug, ours included, may kill the worker
             self._judge_error(surface, judge, "other", repr(exc))
-        else:
-            lag_ms = (time.monotonic() - job.received_at) * 1000
-            flagged = surface.stats.judge(judge.name).record_verdict(self.questions, verdict)
-            self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
-            step = job.event.get("replay_step")
-            self.printer.verdict(surface.label, judge.name, verdict, flagged, step, job.context)
-            trip = self.decider.fold(surface.key, judge.name, job.event, verdict)
-            if trip is not None:
-                self._tripped(surface, judge, trip)
-            if self.on_verdict:
-                tripped = self.decider.tripped(surface.key, judge.name) is not None
-                self.on_verdict(surface, judge.name, job, verdict, flagged, tripped)
+
+    def _record(self, surface: Surface, judge: Judge, job: Job, verdict: Verdict) -> None:
+        lag_ms = (time.monotonic() - job.received_at) * 1000
+        flagged = surface.stats.judge(judge.name).record_verdict(self.questions, verdict)
+        self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
+        step = job.event.get("replay_step")
+        self.printer.verdict(surface.label, judge.name, verdict, flagged, step, job.context)
+        trip = self.decider.fold(surface.key, judge.name, job.event, verdict)
+        if trip is not None:
+            self._tripped(surface, judge, trip)
+        if self.on_verdict:
+            tripped = self.decider.tripped(surface.key, judge.name) is not None
+            self.on_verdict(surface, judge.name, job, verdict, flagged, tripped)
 
     def _judge_error(self, surface: Surface, judge: Judge, kind: str, message: str) -> None:
         surface.stats.judge(judge.name).record_error(kind)

@@ -55,6 +55,8 @@ def test_flags():
             '[questions.q]\nkind = "noul"\ninstructions = "x"\nflag_threshold = 0.5\nflag_below = 0.1',
             "flag_threshold",
         ),
+        ('[questions.q]\nkind = "noul"\ninstructions = "x"\nflag_threshold = "0.7"', "number"),
+        ('[questions.q]\nkind = "noul"\ninstructions = "x"\nflag_below = true', "number"),
         (
             (
                 '[questions.q]\nkind = "choice"\ninstructions = "x"\nflag_choices = ["z"]\n'

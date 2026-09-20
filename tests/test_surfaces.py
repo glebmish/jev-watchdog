@@ -698,3 +698,61 @@ async def test_a_waited_for_result_cuts_the_transcript_too(make_payload, transcr
     await registry.drain()
     assert judge.calls[0].transcript_lines == [*TRANSCRIPT_LINES, line]
     await registry.shutdown()
+
+
+async def test_a_pack_value_of_the_wrong_type_does_not_kill_the_worker(make_payload, out):
+    """It used to: the rest of the queue was never judged and replay's drain() never returned."""
+    judge = ScriptedJudge([{"exfil": 0.9}])
+    questions = [Question("exfil", "noul", "i", flag_threshold="0.7")]
+    registry = SurfaceRegistry([judge], questions, Printer(Console(file=out, width=200)))
+    await registry.handle(make_payload("Stop"))
+    await registry.handle(make_payload("Stop"))
+    await asyncio.wait_for(registry.drain(), 2)
+    assert len(judge.calls) == 2
+    assert registry.stats.judge("scripted").errors == {"other": 2}
+    assert "error other: TypeError" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_a_failing_observer_does_not_kill_the_worker(make_payload, out):
+    def observer(*args):
+        raise RuntimeError("observer bug")
+
+    judge = FakeJudge()
+    registry = make_registry(judge, out)
+    registry.on_verdict = observer
+    await registry.handle(make_payload("Stop"))
+    await registry.handle(make_payload("Stop"))
+    await asyncio.wait_for(registry.drain(), 2)
+    assert len(judge.calls) == 2
+    assert "error other: RuntimeError('observer bug')" in out.getvalue()
+    await registry.shutdown()
+
+
+async def test_a_worker_that_dies_is_reported(make_payload, out, monkeypatch):
+    registry = make_registry(FakeJudge(), out)
+
+    def broken_summary(*args):
+        raise RuntimeError("summary bug")
+
+    monkeypatch.setattr(registry.printer, "surface_summary", broken_summary)
+    await registry.handle(make_payload("Stop"))
+    await registry.handle(make_payload("SessionEnd"))
+    await asyncio.wait_for(registry.drain(), 2)
+    await asyncio.sleep(0)  # done callbacks run on the next turn of the loop
+    assert registry.stats.errors == {"worker": 1}
+    assert "fake:012345/main died: RuntimeError('summary bug')" in out.getvalue()
+
+
+async def test_an_intake_worker_that_dies_is_reported(make_payload, transcript, out, monkeypatch):
+    registry = waiting_registry(out, FakeJudge(), wait_s=5)
+
+    async def broken_wait(surface, tool_use_id):
+        raise RuntimeError("wait bug")
+
+    monkeypatch.setattr(registry, "_caught_up", broken_wait)
+    await registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    await asyncio.wait_for(registry.drain(), 2)
+    await asyncio.sleep(0)
+    assert registry.stats.errors == {"worker": 1}
+    assert "intake:012345/main died: RuntimeError('wait bug')" in out.getvalue()
