@@ -756,3 +756,15 @@ async def test_an_intake_worker_that_dies_is_reported(make_payload, transcript, 
     await asyncio.sleep(0)
     assert registry.stats.errors == {"worker": 1}
     assert "intake:012345/main died: RuntimeError('wait bug')" in out.getvalue()
+
+
+async def test_events_after_a_session_end_are_still_judged(make_payload, out):
+    """A resumed session: its job sat behind the end-of-session mark the worker stopped at."""
+    judge = FakeJudge(latency_s=0.02)
+    registry = make_registry(judge, out)
+    await registry.handle(make_payload("Stop"))
+    await registry.handle(make_payload("SessionEnd"))
+    await registry.handle(make_payload("Stop"))
+    await asyncio.wait_for(registry.drain(), 2)
+    assert len(judge.calls) == 2
+    await registry.shutdown()

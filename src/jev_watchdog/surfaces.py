@@ -84,7 +84,7 @@ class Surface:
     transcript_path: Path
     stats: SurfaceStats = field(default_factory=SurfaceStats)
     # One queue and worker per judge, keyed by judge name, so a slow judge never delays a
-    # fast one. None is the end-of-session sentinel: print the summary and stop the worker.
+    # fast one. None is the end-of-session sentinel: print the summary and, if idle, stop.
     queues: dict[str, asyncio.Queue[Job | None]] = field(default_factory=dict)
     workers: dict[str, asyncio.Task] = field(default_factory=dict)
     # Events waiting for the transcript, dispatched in arrival order by one task.
@@ -392,7 +392,12 @@ class SurfaceRegistry:
             try:
                 if job is None:
                     self.printer.surface_summary(surface.label, surface.stats, judge.name)
-                    return
+                    # A job put behind the mark while we were busy found this worker alive,
+                    # so nobody else will take it. With the queue empty, the next job sees
+                    # a finished worker and starts a new one.
+                    if queue.empty():
+                        return
+                    continue
                 await self._judge(surface, judge, job)
             finally:
                 queue.task_done()
