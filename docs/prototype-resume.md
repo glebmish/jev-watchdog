@@ -235,7 +235,7 @@ ingest · SQLite · calibration from logged overrides · cross-thread (parent �
 
 ## 10. Addendum: quarantine (built the same evening)
 
-The first decision rule and the first actuator. Design: `docs/superpowers/specs/2026-09-19-quarantine-design.md`.
+The first decision rule and the first actuator. Design: `docs/design-history/specs/2026-09-19-quarantine-design.md`.
 
 **Rule.** One CUSUM per (thread, judge, question): `evidence = max(0, evidence + value − ref)`,
 quarantine at `evidence ≥ limit`; one contribution per executed action (tool events only,

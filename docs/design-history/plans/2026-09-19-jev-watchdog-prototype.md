@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14, uv, aiohttp, typesafe-sdk 0.7.0 (import `typesafe_sdk`), rich, pytest + pytest-asyncio + pytest-aiohttp, ruff.
 
-**Spec:** `docs/superpowers/specs/2026-09-19-jev-watchdog-prototype-design.md`
+**Spec:** `docs/design-history/specs/2026-09-19-jev-watchdog-prototype-design.md`
 
 ## Global Constraints
 

@@ -1,7 +1,7 @@
 # jev-watchdog prototype — design
 
 Date: 2026-09-19
-Status: approved design, pre-implementation
+Status: implemented 2026-09-19. Written before implementation (the parts marked as added later aside); where it differs from the top-level `README.md`, the README is authoritative.
 
 ## Purpose
 

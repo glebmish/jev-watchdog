@@ -1,7 +1,7 @@
 # Quarantine — design
 
 Date: 2026-09-19
-Status: approved design, pre-implementation
+Status: implemented 2026-09-19. Written before implementation; where it differs from the top-level `README.md`, the README is authoritative.
 Builds on: `2026-09-19-jev-watchdog-prototype-design.md`, `docs/prototype-resume.md`
 
 ## Purpose

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.14, uv, aiohttp, rich, pytest (+pytest-aiohttp, pytest-asyncio), ruff. No new dependencies; the control CLI uses stdlib `urllib`.
 
-**Spec:** `docs/superpowers/specs/2026-09-19-quarantine-design.md`
+**Spec:** `docs/design-history/specs/2026-09-19-quarantine-design.md`
 
 ## Global Constraints
 
