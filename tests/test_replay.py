@@ -255,6 +255,17 @@ def test_parallel_tool_calls_keep_their_own_ids_and_inputs():
     ]
 
 
+def test_results_sharing_a_line_are_one_step():
+    """Both prefixes would be the same lines: the same verdict, folded under each id."""
+    blocks = [{"type": "tool_result", "tool_use_id": i, "content": "ok"} for i in ("a", "b")]
+    results = json.dumps({"type": "user", "message": {"role": "user", "content": blocks}})
+    steps = steps_of([user("go"), results, say("done")])
+    assert [(s.end, s.event, s.tool_use_id) for s in steps] == [
+        (2, "PostToolUse", "b"),
+        (3, "Stop", None),
+    ]
+
+
 async def test_a_case_can_carry_its_own_context(tmp_path):
     printer = Printer(Console(file=io.StringIO(), width=220, color_system=None))
     judge = ScriptedJudge(name="scripted")

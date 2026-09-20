@@ -90,7 +90,17 @@ def has_tool_result(lines: list[str], tool_use_id: str) -> bool:
     Claude Code writes the transcript asynchronously, so a PostToolUse hook can arrive before
     the call it is about has reached the file.
     """
-    for line in reversed(lines):
+    return tool_result_end(lines, tool_use_id) is not None
+
+
+def tool_result_end(lines: list[str], tool_use_id: str) -> int | None:
+    """How many lines tell this tool call's story: up to and including its result.
+
+    None while the result is not in the transcript. Anything after it is a later action,
+    e.g. the result of a call made in parallel, and belongs to that action's own event.
+    """
+    for end in range(len(lines), 0, -1):
+        line = lines[end - 1]
         if tool_use_id not in line:
             continue
         try:
@@ -103,5 +113,5 @@ def has_tool_result(lines: list[str], tool_use_id: str) -> bool:
             and block.get("tool_use_id") == tool_use_id
             for block in content
         ):
-            return True
-    return False
+            return end
+    return None

@@ -21,10 +21,10 @@ from jev_watchdog.transcript import (
     MAIN,
     SurfaceKey,
     conversation_lines,
-    has_tool_result,
     read_lines,
     resolve_transcript_path,
     surface_key,
+    tool_result_end,
 )
 
 LIFECYCLE_EVENTS = frozenset({"SessionStart", "SubagentStart", "SessionEnd"})
@@ -172,9 +172,11 @@ class SurfaceRegistry:
     async def _receive(self, surface: Surface, payload: dict, received_at: float) -> None:
         lines = await self._snapshot(surface)
         if lines is not None:
-            behind = self._awaited(payload) and not has_tool_result(lines, payload["tool_use_id"])
+            own = _own_lines(lines, payload.get("tool_use_id"))
+            behind = own is None and self._awaited(payload)
             context = self.contexts.get(surface.key.session_id, self.default_context)
-            self._admit(surface, _Pending(payload, received_at, None if behind else lines, context))
+            ready = None if behind else lines if own is None else own
+            self._admit(surface, _Pending(payload, received_at, ready, context))
 
     def set_context(self, target: str, text: str) -> str:
         """Set (or, with blank text, clear) the context of the target's whole session."""
@@ -281,8 +283,9 @@ class SurfaceRegistry:
         deadline = time.monotonic() + self.transcript_wait_s
         while True:
             lines = await self._snapshot(surface)
-            if lines is None or has_tool_result(lines, tool_use_id):
-                return lines
+            own = None if lines is None else _own_lines(lines, tool_use_id)
+            if lines is None or own is not None:
+                return own
             if time.monotonic() >= deadline:
                 waited = f"{self.transcript_wait_s * 1000:.0f}ms"
                 self.printer.note(
@@ -408,6 +411,19 @@ class SurfaceRegistry:
         surface.stats.judge(judge.name).record_error(kind)
         self.stats.judge(judge.name).record_error(kind)
         self.printer.error(surface.label, kind, message, judge=judge.name)
+
+
+def _own_lines(lines: list[str], tool_use_id: object) -> list[str] | None:
+    """The transcript as it was when this tool call ended; None while its result is missing.
+
+    The snapshot is taken when the hook arrives, and with parallel tool calls the results of
+    the others are in it by then. Judged whole, every one of those events would score the
+    same last action, and the decider would fold that one score once under each id.
+    """
+    if not (isinstance(tool_use_id, str) and tool_use_id):
+        return None
+    end = tool_result_end(lines, tool_use_id)
+    return None if end is None else lines[:end]
 
 
 def _agent_matches(key: SurfaceKey, agent: str) -> bool:

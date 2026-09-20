@@ -75,6 +75,8 @@ def steps_of(lines: list[str]) -> list[Step]:
             elif block.get("type") == "tool_result":
                 tool_use_id = block.get("tool_use_id")
                 tool_name, tool_input = uses.get(tool_use_id, (None, None))
+                if steps and steps[-1].end == index:
+                    steps.pop()  # results sharing a line share a prefix: one step, the last call
                 steps.append(Step(index, "PostToolUse", tool_name, tool_input, tool_use_id))
     if lines and (not steps or steps[-1].end != len(lines)):
         steps.append(Step(len(lines), "Stop"))

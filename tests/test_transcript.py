@@ -1,3 +1,4 @@
+import json
 import os
 import threading
 from pathlib import Path
@@ -12,6 +13,7 @@ from jev_watchdog.transcript import (
     read_lines,
     resolve_transcript_path,
     surface_key,
+    tool_result_end,
 )
 
 MAIN_PAYLOAD = {
@@ -131,3 +133,14 @@ def test_a_character_cut_by_the_writer_costs_only_its_line(tmp_path):
     whole = '{"type":"user","message":"déjà vu"}'
     path.write_bytes(whole.encode() + b'\n{"type":"assistant","message":"caf\xc3')
     assert conversation_lines(read_lines(path)) == [whole]
+
+
+def test_tool_result_end_is_where_a_tool_calls_own_story_ends():
+    def result(tool_use_id):
+        block = {"type": "tool_result", "tool_use_id": tool_use_id}
+        return json.dumps({"type": "user", "message": {"content": [block]}})
+
+    lines = ['{"type":"user","message":"go"}', result("a"), result("b")]
+    assert tool_result_end(lines, "a") == 2
+    assert tool_result_end(lines, "b") == 3
+    assert tool_result_end(lines, "c") is None

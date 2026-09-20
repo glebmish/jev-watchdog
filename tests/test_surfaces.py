@@ -632,3 +632,69 @@ async def test_a_transcript_path_that_is_not_a_file_is_an_error(make_payload, tm
     assert judge.calls == [] and registry.stats.errors == {"transcript": 1}
     assert "not a regular file" in out.getvalue()
     await registry.shutdown()
+
+
+def parallel_calls(transcript) -> list[str]:
+    """Two tool calls made in one turn: both uses are written, then both results."""
+
+    def line(role, block):
+        return json.dumps({"type": role, "message": {"role": role, "content": [block]}})
+
+    lines = [
+        *TRANSCRIPT_LINES,
+        line("assistant", {"type": "tool_use", "id": "a", "name": "Read", "input": {}}),
+        line("assistant", {"type": "tool_use", "id": "b", "name": "Bash", "input": {}}),
+        line("user", {"type": "tool_result", "tool_use_id": "a", "content": "ok"}),
+        line("user", {"type": "tool_result", "tool_use_id": "b", "content": "denied"}),
+    ]
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lines
+
+
+async def test_a_tool_event_is_judged_on_the_transcript_up_to_its_own_result(
+    make_payload, transcript, out
+):
+    lines = parallel_calls(transcript)
+    judge = FakeJudge()
+    registry = make_registry(judge, out)
+    await registry.handle(make_payload("PostToolUse", tool_use_id="a"))
+    await registry.handle(make_payload("PostToolUse", tool_use_id="b"))
+    await registry.handle(make_payload("Stop"))
+    await registry.drain()
+    assert [call.transcript_lines for call in judge.calls] == [lines[:5], lines, lines]
+    await registry.shutdown()
+
+
+class LastResultJudge(ScriptedJudge):
+    """Scores the most recent action, as the questions ask: 0.72 for b's result, else 0."""
+
+    async def judge(self, req):
+        self.values = [{"exfil": 0.72 if '"denied"' in req.transcript_lines[-1] else 0.0}]
+        return await super().judge(req)
+
+
+async def test_parallel_tool_calls_are_not_folded_twice(make_payload, transcript, out):
+    parallel_calls(transcript)
+    judge = LastResultJudge([])
+    questions = [Question("exfil", "noul", "i", quarantine_ref=0.6, quarantine_limit=0.2)]
+    registry = SurfaceRegistry([judge], questions, Printer(Console(file=out)), enforce=True)
+    await registry.handle(make_payload("PostToolUse", tool_use_id="a"))
+    await registry.handle(make_payload("PostToolUse", tool_use_id="b"))
+    await registry.drain()
+    evidence = registry.decider.evidence(SurfaceKey(SESSION_ID, MAIN), judge.name)
+    assert evidence == {"exfil": pytest.approx(0.12)}
+    assert registry.quarantines.all() == []
+    await registry.shutdown()
+
+
+async def test_a_waited_for_result_cuts_the_transcript_too(make_payload, transcript, out):
+    judge = FakeJudge()
+    registry = waiting_registry(out, judge, wait_s=5)
+    line, flush = behind_transcript(transcript)
+    await registry.handle(make_payload("PostToolUse", tool_use_id="t1"))
+    flush()
+    with transcript.open("a", encoding="utf-8") as fh:
+        fh.write('{"type":"assistant","message":"the next thing"}\n')
+    await registry.drain()
+    assert judge.calls[0].transcript_lines == [*TRANSCRIPT_LINES, line]
+    await registry.shutdown()
