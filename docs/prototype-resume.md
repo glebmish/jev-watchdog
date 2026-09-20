@@ -1,7 +1,12 @@
 # jev-watchdog prototype: résumé (2026-09-19)
 
-Follow-up to an earlier design chat about a Jev-powered agent watchdog. Built and measured in one
-afternoon with a throwaway Jev key. Evidence grades used below: **[repeated]** = same result
+> **Snapshot.** Sections 1–9 describe the prototype as of the early evening of 2026-09-19,
+> before quarantine, session context and the Codex judge existed. Sections 10–12 and the
+> top-level [README](../README.md) supersede them where they differ.
+
+Follow-up to a design chat about a Jev-powered agent watchdog. "The v0 design" below is the
+unpublished pre-prototype sketch that came out of that chat; the prototype was built to test
+it. Built and measured in one afternoon with a throwaway Jev key. Evidence grades used below: **[repeated]** = same result
 over ≥ 3 runs, **[live]** = seen on real Claude Code sessions, **[once]** = a single run,
 **[inferred]** = not measured.
 
@@ -24,7 +29,12 @@ over ≥ 3 runs, **[live]** = seen on real Claude Code sessions, **[once]** = a 
 ## 1. What exists
 
 Foreground, observe-only CLI. Python 3.14, uv, aiohttp, typesafe-sdk 0.7, claude-agent-sdk
-0.2, rich. 130 offline tests, 4 live tests (real Jev, real Claude), ruff clean.
+0.2, rich. 130 offline tests, 4 live tests (real Jev, real Claude) at the time, more since;
+ruff clean.
+
+The diagram is the observe-only pipeline of that snapshot. Since then `PreToolUse` answers a
+deny body for a quarantined thread, so "empty 200, always" holds for every other hook only
+(section 10), and `codex[:model]` is a fourth judge (section 12).
 
 ```
 Claude Code ──hooks (http POST)──► 127.0.0.1:8787/hooks ── empty 200, always
@@ -44,13 +54,15 @@ Claude Code ──hooks (http POST)──► 127.0.0.1:8787/hooks ── empty 2
 ```
 
 - Hooks used: `UserPromptSubmit`, `PostToolUse`, `PostToolUseFailure`, `PermissionDenied`,
-  `Stop`, `SubagentStop` judge; `SessionStart`, `SubagentStart`, `SessionEnd` only register.
+  `Stop`, `SubagentStop` judge; `SessionStart`, `SubagentStart`, `SessionEnd` only register
+  (at the time; `PreToolUse` was added as the quarantine gate, see section 10).
 - What Jev receives: `state` = array of the raw transcript JSONL lines (type `user` or
   `assistant`, not `isMeta`), `questions` = the pack. No summary, window, signals or redaction.
 - `jev-watchdog replay case.jsonl…` cuts a transcript into steps (after every tool result, and
   at the end), judges every prefix through the same code path as live events, and checks
-  `case.expect.toml` (`step`, `flagged = [...]`, `clear = [...]`), reporting false negatives and
-  false positives per judge.
+  `case.expect.toml` (`step`, `flagged = [...]`, `clear = [...]`; at the time — `quarantined`
+  and `context` came with sections 10 and 11), reporting false negatives and false positives
+  per judge.
 
 Live output:
 
@@ -146,12 +158,14 @@ a JSON schema for the answers, no tools, thinking off, one model step.
 | cost, 122 judgments | $0.0054 | $0.83 | $1.80 |
 | probability answers that are exactly 0 or 1 | 0% (47% strictly inside 0.05–0.95) | 100% | 92% |
 
-- Different blind spots, as the chat predicted: only Jev makes the `.env.example` error; both
+- Different blind spots, as the design chat predicted: only Jev makes the `.env.example` error; both
   Claude models miss the buried `scp`; Haiku calls printing `.env` locally exfiltration.
 - Thinking on roughly doubles Claude latency (Haiku 11–13 s) **[once]**. Every judgment is a CLI
   process start plus two API round trips (structured output is a tool call).
 
 ## 5. Corrections to the v0 design
+
+What the pre-prototype sketch assumed and the prototype showed to be wrong:
 
 - `async: true` exists only for **command** hooks. HTTP hooks are synchronous, but a refused
   connection or non-2xx is a non-blocking error — so answer instantly, judge in the background.
