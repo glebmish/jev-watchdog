@@ -1,4 +1,5 @@
-"""Foreground output: one console line per event/verdict/error, plus a JSONL run log."""
+"""Output: one console line per event/verdict/error, a JSONL run log, and the feed of an
+attached dashboard. The line and the feed come from one display record; the log is fuller."""
 
 import json
 import re
@@ -12,11 +13,13 @@ from rich.console import Console
 from rich.table import Table
 from rich.text import Text
 
-from jev_watchdog.judge.base import Answer, Verdict
+from jev_watchdog.feed import Feed
+from jev_watchdog.judge.base import Verdict
 from jev_watchdog.stats import ChoiceStat, GlobalStats, JudgeSurfaceStats, SurfaceStats
 
 LABEL_WIDTH = 26
 PROMPT_PREVIEW = 60
+MESSAGE_LIMIT = 500  # of any text in a record handed to the feed
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 
 
@@ -37,20 +40,19 @@ class Printer:
         console: Console,
         log_file: TextIO | None = None,
         clock: Callable[[], datetime] = datetime.now,
+        feed: Feed | None = None,
     ) -> None:
         self.console = console
         self.log_file = log_file
         self.clock = clock
+        self.feed = feed
 
     def banner(self, text: str) -> None:
         self.console.print(Text(text, style="bold"), soft_wrap=True)
 
     def event(self, label: str, payload: dict) -> None:
         name = payload.get("hook_event_name", "?")
-        line = self._prefix(label)
-        line.append(f"{name:<18} ", style="bold")
-        line.append(_event_detail(name, payload))
-        self._show(line)
+        self._emit("event", label, {"event": name, "detail": _event_detail(name, payload)})
         self._log("event", label, payload=payload)
 
     def verdict(
@@ -62,16 +64,14 @@ class Printer:
         step: int | None = None,
         context: str | None = None,
     ) -> None:
-        line = self._prefix(label)
-        line.append(f"{judge} ", style="green")
-        line.append(f"{verdict.latency_ms:.0f}ms {_tokens(verdict.input_tokens)}  ", style="dim")
-        for qid, answer in verdict.answers.items():
-            if qid in flagged:
-                line.append(f"{qid}={_value(answer)}!", style="bold red")
-            else:
-                line.append(f"{qid}={_value(answer)}")
-            line.append(" ")
-        self._show(line)
+        shown = {
+            "judge": judge,
+            "latency_ms": verdict.latency_ms,
+            "input_tokens": verdict.input_tokens,
+            "answers": {qid: answer.value for qid, answer in verdict.answers.items()},
+            "flagged": sorted(flagged),
+        }
+        self._emit("verdict", label, shown)
         self._log(
             "verdict",
             label,
@@ -83,38 +83,24 @@ class Printer:
         )
 
     def error(self, label: str, kind: str, message: str, judge: str | None = None) -> None:
-        line = self._prefix(label)
-        who = f"{judge} " if judge else ""
-        line.append(f"{who}error {kind}: {message}", style="yellow")
-        self._show(line)
+        self._emit("error", label, {"judge": judge, "error_kind": kind, "message": message})
         self._log("error", label, judge=judge, error_kind=kind, message=message)
 
     def note(self, label: str, message: str) -> None:
-        line = self._prefix(label)
-        line.append(message, style="dim")
-        self._show(line)
+        self._emit("note", label, {"message": message})
         self._log("note", label, message=message)
 
     def quarantine(self, label: str, source: str, reason: str, enforced: bool) -> None:
-        line = self._prefix(label)
-        if enforced:
-            line.append(f"QUARANTINED by {source}: {reason}", style="bold white on red")
-        else:
-            line.append(f"{source} would quarantine: {reason}", style="bold red")
-        self._show(line)
+        self._emit("quarantine", label, {"source": source, "reason": reason, "enforced": enforced})
         self._log("quarantine", label, source=source, reason=reason, enforced=enforced)
 
     def rejected(self, label: str, payload: dict, reason: str) -> None:
-        line = self._prefix(label)
-        line.append(f"{'rejected':<18} ", style="bold red")
-        line.append(_event_detail("PreToolUse", payload))
-        self._show(line)
+        detail = _event_detail("PreToolUse", payload)
+        self._emit("rejected", label, {"detail": detail, "reason": reason})
         self._log("rejected", label, payload=payload, reason=reason)
 
     def released(self, label: str) -> None:
-        line = self._prefix(label)
-        line.append("released from quarantine", style="bold green")
-        self._show(line)
+        self._emit("released", label, {})
         self._log("released", label)
 
     def surface_summary(self, label: str, stats: SurfaceStats, judge: str | None = None) -> None:
@@ -139,15 +125,12 @@ class Printer:
             soft_wrap=True,
         )
 
-    def _show(self, line: Text) -> None:
-        line.plain = printable(line.plain)  # same length, so the styles stay where they are
-        self.console.print(line, soft_wrap=True)
-
-    def _prefix(self, label: str) -> Text:
-        line = Text()
-        line.append(f"{self.clock():%H:%M:%S} ", style="dim")
-        line.append(f"{label:<{LABEL_WIDTH}} ", style="cyan")
-        return line
+    def _emit(self, kind: str, label: str, shown: dict) -> None:
+        """Show one display record on the console and hand it to whoever is attached."""
+        record = display_record(kind, label, self.clock(), **shown)
+        self.console.print(render_line(record), soft_wrap=True)
+        if self.feed is not None:
+            self.feed.publish(_cut(record))
 
     def _log(self, kind: str, label: str, **data) -> None:
         if self.log_file is None:
@@ -161,6 +144,58 @@ class Printer:
             # not turn a deny into a handler error. Say it once and watch on without a log.
             self.log_file = None
             self.console.print(Text(f"run log failed, no longer written: {exc}", style="bold red"))
+
+
+def display_record(kind: str, label: str, ts: datetime, **shown) -> dict:
+    """What one console line shows, as data. The run log keeps the payloads; this does not."""
+    return {"ts": ts.isoformat(timespec="seconds"), "kind": kind, "surface": label} | shown
+
+
+def render_line(record: dict) -> Text:
+    """The console line of a display record. The dashboard draws its feed with it too."""
+    line = Text()
+    line.append(f"{record['ts'][11:19]} ", style="dim")
+    line.append(f"{record['surface']:<{LABEL_WIDTH}} ", style="cyan")
+    kind = record["kind"]
+    if kind == "event":
+        line.append(f"{record['event']:<18} ", style="bold")
+        line.append(record["detail"])
+    elif kind == "verdict":
+        line.append(f"{record['judge']} ", style="green")
+        tokens = _tokens(record["input_tokens"])
+        line.append(f"{record['latency_ms']:.0f}ms {tokens}  ", style="dim")
+        for qid, value in record["answers"].items():
+            if qid in record["flagged"]:
+                line.append(f"{qid}={_value(value)}!", style="bold red")
+            else:
+                line.append(f"{qid}={_value(value)}")
+            line.append(" ")
+    elif kind == "error":
+        who = f"{record['judge']} " if record["judge"] else ""
+        line.append(f"{who}error {record['error_kind']}: {record['message']}", style="yellow")
+    elif kind == "note":
+        line.append(record["message"], style="dim")
+    elif kind == "quarantine" and record["enforced"]:
+        line.append(
+            f"QUARANTINED by {record['source']}: {record['reason']}", style="bold white on red"
+        )
+    elif kind == "quarantine":
+        line.append(f"{record['source']} would quarantine: {record['reason']}", style="bold red")
+    elif kind == "rejected":
+        line.append(f"{'rejected':<18} ", style="bold red")
+        line.append(record["detail"])
+    elif kind == "released":
+        line.append("released from quarantine", style="bold green")
+    line.plain = printable(line.plain)  # same length, so the styles stay where they are
+    return line
+
+
+def _cut(record: dict) -> dict:
+    """A record for the feed: it is kept in memory and streamed, so no text runs on."""
+    return {
+        key: value[:MESSAGE_LIMIT] if isinstance(value, str) else value
+        for key, value in record.items()
+    }
 
 
 def _questions_table(label: str, judge: str, stats: JudgeSurfaceStats) -> Table:
@@ -221,8 +256,8 @@ def _tool_preview(tool_input: object) -> str:
     return ""
 
 
-def _value(answer: Answer) -> str:
-    return answer.value if isinstance(answer.value, str) else f"{answer.value:.2f}"
+def _value(value: float | str) -> str:
+    return value if isinstance(value, str) else f"{value:.2f}"
 
 
 def _num(value: float | None, digits: int = 2) -> str:

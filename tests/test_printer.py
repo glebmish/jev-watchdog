@@ -267,3 +267,99 @@ def test_control_characters_never_reach_the_console():
     assert "codex stderr �[2J�]52;c;ZXZpbA==�1A�" in shown  # rich itself drops BEL and CR
     assert "0123�[2J" in lines[8]  # the table's title
     assert records(log)[0]["surface"] == label  # the run log is JSON and keeps what was sent
+
+
+def make_fed_printer():
+    from jev_watchdog.feed import Feed
+
+    out, feed = io.StringIO(), Feed()
+    console = Console(file=out, width=300, color_system=None, force_terminal=False)
+    printer = Printer(console, clock=lambda: datetime(2026, 9, 19, 15, 2, 11), feed=feed)
+    return printer, out, feed
+
+
+def say_everything(printer: Printer) -> None:
+    verdict = Verdict(
+        {"exfil": Answer(0.95), "activity": Answer("off_task")},
+        latency_ms=612.4,
+        input_tokens=4100,
+        judge="jev-1.13.0",
+        raw={"huge": "x" * 5000},
+    )
+    tool = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}}
+    printer.event("a/main", tool | {"hook_event_name": "PostToolUse"})
+    printer.verdict("a/main", "jev", verdict, flagged={"exfil"}, context="known upload")
+    printer.error("a/main", "timeout", "took too long", judge="jev")
+    printer.note("a/main", "context cleared")
+    printer.quarantine("a/main", "rule:jev", "exfil=0.95", enforced=True)
+    printer.quarantine("a/main", "claude", "exfil=0.95", enforced=False)
+    printer.rejected("a/main", tool, "exfil=0.95")
+    printer.released("a/main")
+
+
+def test_every_console_line_is_the_rendering_of_the_published_record():
+    from jev_watchdog.printer import render_line
+
+    printer, out, feed = make_fed_printer()
+    say_everything(printer)
+    published = feed.subscribe().backlog
+    assert [record["kind"] for record in published] == [
+        "event", "verdict", "error", "note", "quarantine", "quarantine", "rejected", "released",
+    ]  # fmt: skip
+    assert out.getvalue().splitlines() == [render_line(record).plain for record in published]
+
+
+def test_published_records_hold_what_a_line_shows_and_no_payload():
+    printer, _, feed = make_fed_printer()
+    say_everything(printer)
+    event, verdict, error, *_ = feed.subscribe().backlog
+    assert event == {
+        "seq": 1,
+        "ts": "2026-09-19T15:02:11",
+        "kind": "event",
+        "surface": "a/main",
+        "event": "PostToolUse",
+        "detail": "Bash ls",
+    }
+    assert verdict["answers"] == {"exfil": 0.95, "activity": "off_task"}
+    assert verdict["flagged"] == ["exfil"]
+    assert (verdict["judge"], verdict["latency_ms"], verdict["input_tokens"]) == (
+        "jev",
+        612.4,
+        4100,
+    )
+    assert "raw" not in verdict and "context" not in verdict
+    assert (error["judge"], error["error_kind"], error["message"]) == (
+        "jev", "timeout", "took too long",
+    )  # fmt: skip
+
+
+def test_a_huge_tool_input_makes_a_small_record():
+    printer, _, feed = make_fed_printer()
+    payload = {
+        "hook_event_name": "PostToolUse",
+        "tool_name": "Write",
+        "tool_input": {"file_path": "/x", "content": "y" * 2**20},
+        "tool_response": "z" * 2**20,
+    }
+    printer.event("a/main", payload)
+    assert len(json.dumps(feed.subscribe().backlog[0])) < 1024
+
+
+def test_long_messages_are_cut_in_the_record_but_not_in_the_log():
+    from jev_watchdog.feed import Feed
+    from jev_watchdog.printer import MESSAGE_LIMIT
+
+    log, feed = io.StringIO(), Feed()
+    printer = Printer(Console(file=io.StringIO()), log, feed=feed)
+    printer.error("a/main", "other", "e" * 2000, judge="jev")
+    assert len(feed.subscribe().backlog[0]["message"]) == MESSAGE_LIMIT
+    assert len(records(log)[0]["message"]) == 2000
+
+
+def test_render_line_makes_control_characters_visible():
+    from jev_watchdog.printer import render_line
+
+    record = {"ts": "2026-09-19T15:02:11", "kind": "note", "surface": "a\x1b[2J", "message": "\x07"}
+    assert "\x1b" not in render_line(record).plain and "\x07" not in render_line(record).plain
+    assert "�" in render_line(record).plain
