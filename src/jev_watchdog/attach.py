@@ -29,6 +29,17 @@ class AttachClient:
     async def state(self) -> dict:
         return await self._call("GET", "/state")
 
+    async def history(self, session_id: str, agent_id: str) -> dict:
+        return await self._call(
+            "GET", "/history", params={"session_id": session_id, "agent_id": agent_id}
+        )
+
+    async def timeline(self, minutes: int, buckets: int, judge: str | None = None) -> dict:
+        params = {"minutes": str(minutes), "buckets": str(buckets)} | (
+            {"judge": judge} if judge else {}
+        )
+        return await self._call("GET", "/timeline", params=params)
+
     async def quarantine(self, target: str, reason: str) -> dict:
         return await self._call("POST", "/quarantine", {"target": target, "reason": reason})
 
@@ -66,11 +77,13 @@ class AttachClient:
             await self._session.close()
             self._session = None
 
-    async def _call(self, method: str, path: str, body: dict | None = None) -> dict:
+    async def _call(
+        self, method: str, path: str, body: dict | None = None, params: dict | None = None
+    ) -> dict:
         timeout = aiohttp.ClientTimeout(total=CONNECT_TIMEOUT_S)
         try:
             async with self._http().request(
-                method, f"{BASE}{path}", json=body, timeout=timeout
+                method, f"{BASE}{path}", json=body, params=params, timeout=timeout
             ) as response:
                 answer = await response.json()
                 if response.status != 200:

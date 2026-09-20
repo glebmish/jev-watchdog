@@ -326,3 +326,62 @@ async def test_on_a_unix_socket_the_host_is_not_checked_but_a_web_page_is_refuse
             assert form.status == 415
     finally:
         await runner.cleanup()
+
+
+# --- what the charts are drawn from: /history and /timeline -----------------------------------
+
+
+@pytest.fixture
+def tripping(out_registry=None):
+    from conftest import ScriptedJudge
+
+    console = Console(file=io.StringIO(), width=200, color_system=None)
+    questions = [Question("exfil", "noul", "i", flag_threshold=0.55, quarantine_ref=0.45,
+                          quarantine_limit=0.2)]  # fmt: skip
+    judge = ScriptedJudge([{"exfil": 0.55}, {"exfil": 0.95}], name="jev")
+    return SurfaceRegistry([judge], questions, Printer(console), enforce=True, transcript_wait_s=0)
+
+
+async def test_history_is_a_threads_evidence_and_what_happened_to_it(
+    aiohttp_client, tripping, make_payload
+):
+    app, _ = attachable(tripping)
+    client = await aiohttp_client(app)
+    for tool_use_id in ("t1", "t2"):
+        await client.post("/hooks", json=make_payload("PostToolUse", tool_use_id=tool_use_id))
+        await tripping.drain()
+    await client.post("/release", json={"target": SESSION_ID[:6]})
+    response = await client.get("/history", params={"session_id": SESSION_ID, "agent_id": "main"})
+    history = await response.json()
+    assert history["limits"] == {"exfil": 0.2}
+    assert [point["evidence"] for point in history["judges"]["jev"]] == [
+        {"exfil": 0.1}, {"exfil": 0.6}, {},
+    ]  # fmt: skip
+    assert [mark["kind"] for mark in history["marks"]] == ["quarantine", "release"]
+    missing = await client.get("/history", params={"session_id": "nobody", "agent_id": "main"})
+    assert missing.status == 404
+    await tripping.shutdown()
+
+
+async def test_timeline_buckets_every_thread_as_the_deciding_judge_saw_it(
+    aiohttp_client, tripping, make_payload
+):
+    app, _ = attachable(tripping)
+    client = await aiohttp_client(app)
+    await client.post("/hooks", json=make_payload("PostToolUse", tool_use_id="t1"))
+    await tripping.drain()
+    timeline = await (
+        await client.get("/timeline", params={"minutes": "10", "buckets": "5"})
+    ).json()
+    assert timeline["judge"] == "jev" and timeline["bucket_s"] == 120
+    (row,) = timeline["threads"]
+    assert row["label"] == f"{SESSION_ID[:6]}/main" and row["cells"][-1] == 0.5
+    for bad in ({"minutes": "x"}, {"buckets": "0"}, {"minutes": "999999"}):
+        assert (await client.get("/timeline", params=bad)).status == 400
+    await tripping.shutdown()
+
+
+@pytest.mark.parametrize("path", ["/history", "/timeline"])
+async def test_the_chart_routes_do_not_exist_without_a_feed(aiohttp_client, registry, path):
+    client = await aiohttp_client(create_app(registry))
+    assert (await client.get(path)).status == 404

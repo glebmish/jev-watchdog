@@ -13,6 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from jev_watchdog.decide import TOOL_EVENTS, Decider, Trip
+from jev_watchdog.history import History
 from jev_watchdog.judge.base import Judge, JudgeError, JudgeRequest, Verdict
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
@@ -132,6 +133,7 @@ class SurfaceRegistry:
         self.enforce = enforce
         self.transcript_wait_s = transcript_wait_s
         self.decider = Decider(questions)
+        self.history = History(self.decider.rules)  # for the dashboard's charts; decides nothing
         self.quarantines = Quarantines()
         # What the human told the watchdog about a session, by session id: every thread of
         # the session is judged with it. default_context stands in where nothing was said.
@@ -210,6 +212,7 @@ class SurfaceRegistry:
         if entry is None:
             raise TargetError(404, f"{surface.label} is not quarantined")
         self.decider.reset(surface.key)  # or the old evidence would quarantine it again
+        self.history.mark(surface.key, self.printer.clock(), "release")
         self.printer.released(surface.label)
         return entry
 
@@ -319,6 +322,7 @@ class SurfaceRegistry:
     def _tripped(self, surface: Surface, judge: Judge, trip: Trip) -> None:
         source, reason = f"rule:{judge.name}", trip.describe()
         if not (self.enforce and judge is self.judges[0]):
+            self.history.mark(surface.key, self.printer.clock(), "trip", judge.name)
             self.printer.quarantine(surface.label, judge.name, reason, enforced=False)
         elif self._add(surface, reason, source) is None:
             # Already held by hand: keep the trip on the entry, so whoever thinks about
@@ -332,6 +336,7 @@ class SurfaceRegistry:
         if not self.quarantines.add(entry):
             return None
         self.stats.quarantines += 1
+        self.history.mark(surface.key, entry.at, "quarantine")
         self.printer.quarantine(surface.label, source, reason, enforced=True)
         return entry
 
@@ -426,6 +431,14 @@ class SurfaceRegistry:
         step = job.event.get("replay_step")
         self.printer.verdict(surface.label, judge.name, verdict, flagged, step, job.context)
         trip = self.decider.fold(surface.key, judge.name, job.event, verdict)
+        self.history.record(
+            surface.key,
+            judge.name,
+            self.printer.clock(),
+            self.decider.evidence(surface.key, judge.name),
+            len(flagged),
+            folded=job.event.get("hook_event_name") in TOOL_EVENTS,
+        )
         if trip is not None:
             self._tripped(surface, judge, trip)
         if self.on_verdict:

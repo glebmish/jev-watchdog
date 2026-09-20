@@ -12,6 +12,7 @@ from jev_watchdog.surfaces import Surface, SurfaceRegistry
 
 # The registry never forgets a thread; a dashboard has no use for last month's.
 MAX_THREADS = 200
+RECENT_JUDGMENTS = 200  # of each judge's latencies and lags, for the dashboard's chart
 
 
 @dataclass(frozen=True)
@@ -25,9 +26,7 @@ class DaemonInfo:
 
 def snapshot(registry: SurfaceRegistry, info: DaemonInfo, now: datetime) -> dict:
     stats = registry.stats
-    recent = sorted(
-        registry.surfaces.values(), key=lambda s: s.last_seen or datetime.min, reverse=True
-    )
+    recent = recent_surfaces(registry)
     return {
         "boot": info.boot,
         "pid": info.pid,
@@ -51,6 +50,8 @@ def snapshot(registry: SurfaceRegistry, info: DaemonInfo, now: datetime) -> dict
                 "lag_p95": judge.lag(95),
                 "input_tokens": judge.input_tokens,
                 "cost_usd": judge.cost_usd,
+                "recent_latency_ms": judge.latencies_ms[-RECENT_JUDGMENTS:],
+                "recent_lag_ms": judge.lags_ms[-RECENT_JUDGMENTS:],
             }
             for name, judge in stats.judges.items()
         ],
@@ -63,8 +64,16 @@ def snapshot(registry: SurfaceRegistry, info: DaemonInfo, now: datetime) -> dict
             "rejected": stats.rejected,
             "cost_usd": stats.cost_usd,
         },
-        "threads": [_thread(registry, surface) for surface in recent[:MAX_THREADS]],
+        "threads": [_thread(registry, surface) for surface in recent],
     }
+
+
+def recent_surfaces(registry: SurfaceRegistry) -> list[Surface]:
+    """The threads a dashboard is shown, most recently seen first."""
+    seen = sorted(
+        registry.surfaces.values(), key=lambda s: s.last_seen or datetime.min, reverse=True
+    )
+    return seen[:MAX_THREADS]
 
 
 def _thread(registry: SurfaceRegistry, surface: Surface) -> dict:

@@ -19,14 +19,17 @@ from aiohttp import web
 
 from jev_watchdog.feed import Feed
 from jev_watchdog.quarantine import Quarantine
-from jev_watchdog.state import DaemonInfo, snapshot
+from jev_watchdog.state import DaemonInfo, recent_surfaces, snapshot
 from jev_watchdog.surfaces import SurfaceRegistry, TargetError
+from jev_watchdog.transcript import SurfaceKey
 
 LOCAL_HOSTS = ("127.0.0.1", "localhost")
 # A hook carries the whole tool input and output (a large Write, a long Bash log). Over
 # aiohttp's 1 MiB default the 413 is a non-2xx, which Claude Code does not block on: the
 # large tool calls of a quarantined thread would go through, and never be judged or logged.
 MAX_BODY_BYTES = 64 * 2**20
+MAX_TIMELINE_MINUTES = 7 * 24 * 60
+MAX_TIMELINE_BUCKETS = 400
 KEEPALIVE_S = 15.0  # a comment on an idle /events stream, so a dead follower is noticed
 
 
@@ -101,6 +104,26 @@ def create_app(
     async def state(request: web.Request) -> web.Response:
         return web.json_response(snapshot(registry, info, registry.printer.clock()))
 
+    async def history(request: web.Request) -> web.Response:
+        key = SurfaceKey(request.query.get("session_id", ""), request.query.get("agent_id", ""))
+        if key not in registry.surfaces:
+            return web.json_response({"error": "no such agent thread"}, status=404)
+        return web.json_response(registry.history.series(key))
+
+    async def timeline(request: web.Request) -> web.Response:
+        try:
+            minutes = int(request.query.get("minutes", "60"))
+            buckets = int(request.query.get("buckets", "60"))
+        except ValueError:
+            return web.json_response({"error": "minutes and buckets are numbers"}, status=400)
+        if not (0 < minutes <= MAX_TIMELINE_MINUTES and 0 < buckets <= MAX_TIMELINE_BUCKETS):
+            return web.json_response({"error": "minutes or buckets out of range"}, status=400)
+        judge = request.query.get("judge") or registry.judges[0].name
+        # Oldest first, like the dashboard's thread list.
+        threads = [(s.key, s.label) for s in reversed(recent_surfaces(registry))]
+        now = registry.printer.clock()
+        return web.json_response(registry.history.timeline(threads, judge, now, minutes, buckets))
+
     async def events(request: web.Request) -> web.StreamResponse:
         try:
             since = int(request.query.get("since", "0"))
@@ -144,6 +167,8 @@ def create_app(
     if feed is not None and info is not None:
         app.router.add_get("/state", state)
         app.router.add_get("/events", events)
+        app.router.add_get("/history", history)
+        app.router.add_get("/timeline", timeline)
     return app
 
 
