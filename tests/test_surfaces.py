@@ -768,3 +768,69 @@ async def test_events_after_a_session_end_are_still_judged(make_payload, out):
     await asyncio.wait_for(registry.drain(), 2)
     assert len(judge.calls) == 2
     await registry.shutdown()
+
+
+# --- forgetting: a service runs for weeks -------------------------------------------------
+
+
+def small_registry(out, judge, **options) -> SurfaceRegistry:
+    console = Console(file=out, width=200, color_system=None)
+    return SurfaceRegistry(
+        [judge], RULED, Printer(console), transcript_wait_s=0, max_threads=2, **options
+    )
+
+
+async def test_only_the_threads_heard_of_last_are_kept(make_payload, out):
+    registry = small_registry(out, ScriptedJudge([{"exfil": 0.55}]), context=None)
+    for session in ("aaaa-1", "bbbb-2"):
+        await registry.handle(make_payload("PostToolUse", session_id=session, tool_use_id="t"))
+    await registry.drain()
+    registry.set_context("aaaa", "known")
+    first = SurfaceKey("aaaa-1", MAIN)
+    workers = list(registry.surfaces[first].workers.values())
+    assert registry.decider.evidence(first, "scripted") == {"exfil": 0.1}
+
+    await registry.handle(make_payload("SessionStart", session_id="cccc-3"))
+    assert [key.session_id for key in registry.surfaces] == ["bbbb-2", "cccc-3"]
+    assert registry.decider.evidence(first, "scripted") == {}  # or a resumed thread inherits it
+    assert registry.history.series(first) == {"judges": {}, "marks": []}
+    assert registry.contexts == {}
+    await asyncio.sleep(0)
+    assert all(worker.cancelled() for worker in workers)  # parked on its queue for good
+    with pytest.raises(TargetError, match="no agent thread matches"):
+        registry.release("aaaa")
+    assert registry.stats.surfaces == 3  # a count of what was seen, not of what is kept
+    await registry.shutdown()
+
+
+async def test_a_thread_that_is_heard_from_again_is_the_youngest(make_payload, out):
+    registry = small_registry(out, FakeJudge())
+    for session in ("aaaa-1", "bbbb-2", "aaaa-1", "cccc-3"):
+        await registry.handle(make_payload("SessionStart", session_id=session))
+    assert [key.session_id for key in registry.surfaces] == ["aaaa-1", "cccc-3"]
+    await registry.shutdown()
+
+
+async def test_a_quarantined_thread_is_never_forgotten(make_payload, out):
+    """It has to be there to be released, and to be seen in the dashboard."""
+    registry = small_registry(out, FakeJudge())
+    await registry.handle(make_payload("SessionStart", session_id="aaaa-1"))
+    registry.quarantine("aaaa", "held")
+    for session in ("bbbb-2", "cccc-3", "dddd-4"):
+        await registry.handle(make_payload("SessionStart", session_id=session))
+    assert [key.session_id for key in registry.surfaces] == ["aaaa-1", "dddd-4"]  # still two
+    assert registry.release("aaaa").reason == "held"
+    await registry.shutdown()
+
+
+async def test_a_session_keeps_its_context_while_any_of_its_threads_is_kept(
+    make_payload, subagent_transcript, out
+):
+    registry = small_registry(out, FakeJudge())
+    await registry.handle(make_payload("SessionStart"))
+    registry.set_context(SESSION_ID[:6], "known")
+    await registry.handle(make_payload("SubagentStart", agent_id="abc123"))
+    await registry.handle(make_payload("SessionStart", session_id="zzzz-9"))  # forgets main
+    assert SurfaceKey(SESSION_ID, MAIN) not in registry.surfaces
+    assert registry.contexts == {SESSION_ID: "known"}  # the subagent is still judged with it
+    await registry.shutdown()

@@ -194,8 +194,8 @@ class WatchdogApp(App[None]):
         table = self.threads_table
         first = self._state is None
         self._state = state
-        # Oldest first and updated in place: a row never moves under the cursor.
-        self._threads = {draw.row_key(thread): thread for thread in reversed(state["threads"])}
+        # Updated in place: a row never moves under the cursor. New threads join at the end.
+        self._threads = {draw.row_key(thread): thread for thread in state["threads"]}
         for key in [row.value for row in table.rows if row.value not in self._threads]:
             table.remove_row(key)
         present = {row.value for row in table.rows}
@@ -207,8 +207,8 @@ class WatchdogApp(App[None]):
                 for column, cell in zip(draw.THREAD_COLUMNS, cells, strict=True):
                     table.update_cell(key, column, cell, update_width=True)
         if first and table.row_count:
-            table.move_cursor(row=table.row_count - 1)  # the most recently seen
-            self._selected = draw.row_key(state["threads"][0])
+            table.move_cursor(row=table.row_count - 1)  # the most recently heard of
+            self._selected = draw.row_key(state["threads"][-1])
         self._show_header()
         self._show_detail()
 

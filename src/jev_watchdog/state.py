@@ -17,8 +17,6 @@ from jev_watchdog.stats import ChoiceStat, JudgeSurfaceStats, NumericStat
 from jev_watchdog.surfaces import Surface, SurfaceRegistry
 from jev_watchdog.transcript import SurfaceKey
 
-# The registry never forgets a thread; a dashboard has no use for last month's.
-MAX_THREADS = 200
 RECENT_JUDGMENTS = 200  # of each judge's latencies and lags, for the dashboard's chart
 MAX_TIMELINE_MINUTES = 7 * 24 * 60
 MAX_TIMELINE_BUCKETS = 400
@@ -42,8 +40,7 @@ def add_routes(app: web.Application, registry: SurfaceRegistry, feed: Feed) -> N
         minutes = min(max(_number(request, "minutes", 60), 1), MAX_TIMELINE_MINUTES)
         buckets = min(max(_number(request, "buckets", 60), 1), MAX_TIMELINE_BUCKETS)
         judge = request.query.get("judge") or registry.judges[0].name
-        # Oldest first, like the dashboard's thread list.
-        threads = [(s.key, s.label) for s in reversed(recent_surfaces(registry))]
+        threads = [(surface.key, surface.label) for surface in registry.surfaces.values()]
         now = registry.printer.clock()
         return web.json_response(registry.history.timeline(threads, judge, now, minutes, buckets))
 
@@ -90,16 +87,9 @@ def snapshot(registry: SurfaceRegistry, boot: str, now: datetime) -> dict:
             "rejected": stats.rejected,
             "cost_usd": stats.cost_usd,
         },
-        "threads": [_thread(registry, surface) for surface in recent_surfaces(registry)],
+        # As the registry keeps them: the least recently heard of first.
+        "threads": [_thread(registry, surface) for surface in registry.surfaces.values()],
     }
-
-
-def recent_surfaces(registry: SurfaceRegistry) -> list[Surface]:
-    """The threads a dashboard is shown, most recently seen first."""
-    seen = sorted(
-        registry.surfaces.values(), key=lambda s: s.last_seen or datetime.min, reverse=True
-    )
-    return seen[:MAX_THREADS]
 
 
 def _thread(registry: SurfaceRegistry, surface: Surface) -> dict:

@@ -15,7 +15,6 @@ from jev_watchdog.transcript import SurfaceKey
 
 HISTORY = 500  # verdicts kept per thread and judge
 MARKS = 100  # per thread
-THREADS = 200  # the ones heard of last; a service runs for weeks
 
 
 @dataclass(frozen=True)
@@ -39,10 +38,10 @@ class _Thread:
 
 
 class History:
-    def __init__(self, rules: list[Question], size: int = HISTORY, threads: int = THREADS) -> None:
+    def __init__(self, rules: list[Question], size: int = HISTORY) -> None:
         self._limits = {rule.id: rule.quarantine_limit for rule in rules}
-        self._size, self._max_threads = size, threads
-        self._threads: dict[SurfaceKey, _Thread] = {}  # insertion-ordered: oldest first
+        self._size = size
+        self._threads: dict[SurfaceKey, _Thread] = {}
 
     def record(
         self, key: SurfaceKey, judge: str, ts: datetime, evidence: dict[str, float], folded: bool
@@ -118,13 +117,11 @@ class History:
             "threads": rows,
         }
 
+    def forget(self, key: SurfaceKey) -> None:
+        self._threads.pop(key, None)
+
     def _thread(self, key: SurfaceKey) -> _Thread:
-        """The thread's history, moved to the young end; the oldest go when there are too many."""
-        thread = self._threads.pop(key, None) or _Thread()
-        self._threads[key] = thread
-        while len(self._threads) > self._max_threads:
-            del self._threads[next(iter(self._threads))]
-        return thread
+        return self._threads.setdefault(key, _Thread())
 
 
 def _iso(moment: datetime) -> str:

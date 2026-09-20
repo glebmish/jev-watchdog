@@ -165,10 +165,8 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
   evidence each verdict left (`folded` marks tool events, the only ones that move it), and
   `_add`, `release` and a non-enforced `_tripped` store marks; a release also appends an empty
   point per judge, because `Decider.reset` starts every judge's evidence over. `/timeline` is
-  bucketed on the server (at most `MAX_TIMELINE_BUCKETS` cells for 200 threads), and a cell is
-  the worst share of a limit among its points; `History` stores shares, so no reader divides. `History` keeps the `THREADS` (200) it heard of
-  last and drops the rest, points and marks: the registry itself never forgets a thread, but
-  this is what grows per verdict.
+  bucketed on the server (at most `MAX_TIMELINE_BUCKETS` cells a thread), and a cell is
+  the worst share of a limit among its points; `History` stores shares, so no reader divides.
 - **The dashboard polls, in one loop** (`tui.WatchdogApp._watch`): `/records` every `TICK_S`
   (0.25 s), and `/state` plus the chart that is up when records came, a key was pressed or
   `IDLE_REFRESH_S` (2 s) passed. A `boot` other than the last one is a restarted watchdog: the
@@ -188,6 +186,14 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
   only `TYPESAFE_API_KEY` is set. `install` reports `running` only when something accepts a
   connection on the socket: the file alone may be a killed watchdog's. launchd: `KeepAlive.SuccessfulExit
   = false`, so a stop stays stopped and a crash or a taken port is retried every 10 s.
+- **The registry forgets, in one place.** `SurfaceRegistry.surfaces` is kept in the order
+  threads were last heard from (`_surface_for` re-inserts), and `_forget` drops the least
+  recent beyond `MAX_THREADS` (200): its workers are cancelled, its evidence (`Decider.reset`),
+  history (`History.forget`) and, with the last thread of a session, its context go with it. A
+  quarantined thread is never dropped: it has to be there to be released. A forgotten thread
+  that speaks again is a new thread, without its evidence. `/state`, `/timeline` and the
+  closing summary show what the registry holds, in its order, so nothing else sorts or caps;
+  `GlobalStats` still counts everything that was seen.
 - **Fails open, state in memory.** `Quarantines`, `Decider` and `contexts` are plain dicts; a
   restart forgets them. `MAX_BODY_BYTES` is 64 MiB because a 413 would mean allow;
   `Printer._log` drops the run log on a write error rather than fail a deny.

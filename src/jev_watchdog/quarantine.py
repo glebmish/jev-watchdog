@@ -61,5 +61,8 @@ class Quarantines:
         """The thread's own quarantine, else its session's main-thread quarantine."""
         return self._entries.get(key) or self._entries.get(SurfaceKey(key.session_id, MAIN))
 
+    def __contains__(self, key: SurfaceKey) -> bool:
+        return key in self._entries
+
     def all(self) -> list[Quarantine]:
         return list(self._entries.values())

@@ -174,8 +174,11 @@ The lower half is one of four views, on the keys `1` to `4`:
   time spent queued behind earlier events: that judge is not keeping up.
 
 `j` changes whose view the evidence and the timeline show. The watchdog keeps the last 500
-verdicts per thread and judge for these charts, for the 200 threads it heard of last, in
-memory like everything else.
+verdicts per thread and judge for these charts, in memory like everything else.
+
+The watchdog keeps the 200 threads it heard from last and forgets the rest: their statistics,
+evidence and history go, and a forgotten thread that turns up again starts from nothing. A
+quarantined thread is never forgotten. The closing totals still count every thread seen.
 
 The dashboard talks to the watchdog over a unix socket,
 `~/.local/state/jev-watchdog/attach-<port>.sock`, mode 0600. What it reads there, `/state` and

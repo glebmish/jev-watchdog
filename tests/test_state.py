@@ -7,7 +7,7 @@ from rich.console import Console
 
 from jev_watchdog.pack import Question
 from jev_watchdog.printer import Printer
-from jev_watchdog.state import MAX_THREADS, snapshot
+from jev_watchdog.state import snapshot
 from jev_watchdog.surfaces import SurfaceRegistry
 
 RULED = [
@@ -94,11 +94,12 @@ async def test_context_is_the_sessions_or_the_default(make_payload):
     assert snapshot(registry, INFO, STARTED)["threads"][0]["context"] == "just here"
 
 
-async def test_threads_come_most_recently_seen_first_and_are_capped(make_payload):
-    registry = make_registry(ScriptedJudge([{}], name="jev"))
-    for n in range(MAX_THREADS + 5):
-        await registry.handle(make_payload("SessionStart", session_id=f"{n:06d}-session"))
-    threads = snapshot(registry, INFO, STARTED)["threads"]
-    assert len(threads) == MAX_THREADS
-    assert threads[0]["session_id"] == f"{MAX_THREADS + 4:06d}-session"
-    assert snapshot(registry, INFO, STARTED)["totals"]["surfaces"] == MAX_THREADS + 5
+async def test_threads_come_as_the_registry_keeps_them_the_least_recently_heard_of_first(
+    make_payload,
+):
+    registry = make_registry(ScriptedJudge([{}], name="jev"), max_threads=2)
+    for session in ("aaaa-1", "bbbb-2", "aaaa-1", "cccc-3"):
+        await registry.handle(make_payload("SessionStart", session_id=session))
+    state = snapshot(registry, INFO, STARTED)
+    assert [thread["session_id"] for thread in state["threads"]] == ["aaaa-1", "cccc-3"]
+    assert state["totals"]["surfaces"] == 3  # what was seen, not what is kept

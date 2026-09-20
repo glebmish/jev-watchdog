@@ -13,7 +13,8 @@ as documentation of what it is now.
   [`prototype-resume.md`](../prototype-resume.md), sections 10–12.
 - The daemon spec's event stream (`/events`, server-sent events, feed subscribers) was replaced
   by polling `/records` when the project was simplified on 2026-09-20; `attach.py` and
-  `control.py` became `client.py`, and serving moved from `cli.py` to `serve.py`.
+  `control.py` became `client.py`, and serving moved from `cli.py` to `serve.py`. The spec's limit "never
+  forgets threads" no longer holds: the registry keeps the 200 it heard from last.
 - "superpowers" in the plan headers is the name of the Claude Code plugin whose workflow
   produced these files; the skills it names are that plugin's, not part of this repo.
 

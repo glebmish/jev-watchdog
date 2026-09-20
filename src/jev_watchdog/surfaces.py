@@ -50,6 +50,10 @@ TRANSCRIPT_WAIT_S = 2.0
 TRANSCRIPT_POLL_S = 0.05
 
 
+# A service runs for weeks, and a dashboard has no use for last month's threads.
+MAX_THREADS = 200
+
+
 class TargetError(Exception):
     """A quarantine/release target that cannot be acted on; status is the HTTP answer."""
 
@@ -117,6 +121,7 @@ class SurfaceRegistry:
         enforce: bool = False,
         transcript_wait_s: float = TRANSCRIPT_WAIT_S,
         context: str | None = None,
+        max_threads: int = MAX_THREADS,
     ) -> None:
         names = [judge.name for judge in judges]
         if len(set(names)) != len(names):
@@ -128,7 +133,9 @@ class SurfaceRegistry:
         self.stats = stats or GlobalStats()
         for judge in judges:
             self.stats.judge(judge.name)  # table rows in the order given
+        # The threads heard of last, the least recently heard of first (_surface_for).
         self.surfaces: dict[SurfaceKey, Surface] = {}
+        self.max_threads = max_threads
         # Every judge's verdicts are folded, so a dry run and side-by-side judges report what
         # they would do. Only the first judge's trips quarantine, and only when enforcing.
         self.enforce = enforce
@@ -359,7 +366,7 @@ class SurfaceRegistry:
 
     def _surface_for(self, payload: dict) -> Surface:
         key = surface_key(payload)
-        surface = self.surfaces.get(key)
+        surface = self.surfaces.pop(key, None)  # and back in below, at the young end
         if surface is None:
             surface = Surface(
                 key=key,
@@ -368,11 +375,27 @@ class SurfaceRegistry:
                 transcript_path=resolve_transcript_path(payload),
                 label_override=payload.get("surface_label"),
             )
-            self.surfaces[key] = surface
             self.stats.surfaces += 1
         elif payload.get("agent_transcript_path"):
             surface.transcript_path = resolve_transcript_path(payload)
+        self.surfaces[key] = surface
+        self._forget()
         return surface
+
+    def _forget(self) -> None:
+        """Keep `max_threads`, dropping the least recently heard of, but never a quarantined
+        one: it has to be there to be released. A forgotten thread that speaks again starts
+        anew, without its evidence."""
+        spare = [key for key in self.surfaces if key not in self.quarantines]
+        for key in spare[: max(len(self.surfaces) - self.max_threads, 0)]:
+            surface = self.surfaces.pop(key)
+            for worker in (*surface.workers.values(), surface.intake_worker):
+                if worker is not None:
+                    worker.cancel()  # parked on its queue since the thread went quiet
+            self.decider.reset(key)
+            self.history.forget(key)
+            if not any(other.session_id == key.session_id for other in self.surfaces):
+                self.contexts.pop(key.session_id, None)
 
     def _enqueue(self, surface: Surface, job: Job | None) -> None:
         for judge in self.judges:

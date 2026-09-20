@@ -147,12 +147,12 @@ def thread_labels(app: WatchdogApp) -> list[str]:
 
 
 def two_threads() -> FakeClient:
-    # /state lists the most recently seen first; the table is oldest first, like the feed.
-    state = make_state(thread(SUB, "bbbbbb"), thread(MAIN, "main"))
+    # /state lists threads as the registry keeps them: the least recently heard of first.
+    state = make_state(thread(MAIN, "main"), thread(SUB, "bbbbbb"))
     return FakeClient(state, [note(1, MAIN, "from main"), note(2, SUB, "from sub")])
 
 
-async def test_threads_are_listed_oldest_first_with_the_newest_selected():
+async def test_threads_are_listed_in_the_watchdogs_order_with_the_last_selected():
     app = make_app(two_threads())
     async with app.run_test(size=(140, 40)) as pilot:
         await until(pilot, lambda: len(thread_labels(app)) == 2, "threads listed")
@@ -339,7 +339,7 @@ async def test_records_and_state_keep_arriving_while_a_question_is_open():
         await pilot.press("x")
         await until(pilot, lambda: bool(app.screen.query(Input)), "asked")
         third = thread("cccccc/main", "main", session_id="cccccc-session")
-        client.current = make_state(third, *client.current["threads"])
+        client.current = make_state(*client.current["threads"], third)
         client.publish(note(3, "cccccc/main", "meanwhile"))
         await until(pilot, lambda: len(thread_labels(app)) == 3, "listed behind the question")
         assert len(feed_lines(app)) == 3 and app.is_running
@@ -415,7 +415,7 @@ async def test_a_refused_chart_request_does_not_stop_the_dashboard_from_updating
         await pilot.press("3")
         await until(pilot, lambda: len(app._notifications) >= 1, "said so")
         third = thread("cccccc/main", "main", session_id="cccccc-session")
-        client.current = make_state(third, *client.current["threads"])
+        client.current = make_state(*client.current["threads"], third)
         client.publish(note(3, "cccccc/main", "later"))
         await until(pilot, lambda: len(thread_labels(app)) == 3, "state still followed")
         assert len(app._notifications) == 1  # said once, not four times a second
