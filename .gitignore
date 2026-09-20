@@ -1,10 +1,46 @@
+# Secrets and credentials
 prototype-throwaway-key
 *.key
+*.pem
+*.p12
+*.pfx
 .env
+.env.*
+!.env.example
+.envrc
+.pypirc
+
+# Run logs (contain full agent transcripts)
 runs/
+*.log
+
+# Python / uv / hatch
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test, lint, type-check caches and coverage
 .pytest_cache/
 .ruff_cache/
-dist/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Claude Code local state
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
+.worktrees/
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

@@ -3,6 +3,9 @@ name = "jev-watchdog"
 version = "0.1.0"
 description = "Watchdog that judges Claude Code agent threads with Jev on every hook event and quarantines them on accumulated evidence."
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Gleb Mishchenko" }]
 requires-python = ">=3.14"
 dependencies = [
     "aiohttp>=3.13",
@@ -28,6 +31,18 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jev_watchdog"]
+
+# An allowlist: without it the sdist takes every file the repo's .gitignore does not name.
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src",
+    "/tests",
+    "/examples",
+    "/plugin",
+    "/packs",
+    "/pack.toml",
+    "/uv.lock",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
