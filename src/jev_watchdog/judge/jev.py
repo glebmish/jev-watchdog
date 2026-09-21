@@ -4,8 +4,8 @@ import time
 
 import typesafe_sdk as ts
 
+from jev_watchdog.core.pack import Question
 from jev_watchdog.judge.base import Answer, JudgeError, JudgeRequest, Verdict, request_state
-from jev_watchdog.pack import Question
 
 DEFAULT_MODEL = "jev-latest"
 PRICE_PER_MTOK_USD = 0.042  # input tokens; output is free

@@ -8,10 +8,10 @@ import pytest
 from rich.console import Console
 
 from jev_watchdog.cli import DEFAULT_PORT
+from jev_watchdog.core.surfaces import ALL_EVENTS, SurfaceRegistry
+from jev_watchdog.daemon.server import create_app
+from jev_watchdog.display.printer import Printer
 from jev_watchdog.judge.fake import FakeJudge
-from jev_watchdog.printer import Printer
-from jev_watchdog.server import create_app
-from jev_watchdog.surfaces import ALL_EVENTS, SurfaceRegistry
 
 PLUGIN = Path(__file__).resolve().parent.parent / "plugin"
 URL = f"http://127.0.0.1:{DEFAULT_PORT}/hooks"

@@ -7,11 +7,11 @@ from conftest import SESSION_ID
 from rich.console import Console
 
 from jev_watchdog.cli import main
+from jev_watchdog.core.pack import Question
+from jev_watchdog.core.surfaces import SurfaceRegistry
+from jev_watchdog.daemon.server import create_app
+from jev_watchdog.display.printer import Printer
 from jev_watchdog.judge.fake import FakeJudge
-from jev_watchdog.pack import Question
-from jev_watchdog.printer import Printer
-from jev_watchdog.server import create_app
-from jev_watchdog.surfaces import SurfaceRegistry
 
 
 @pytest.fixture

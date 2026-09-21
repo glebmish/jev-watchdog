@@ -1,12 +1,14 @@
 # Architecture
 
 How a hook event becomes a verdict, and a verdict a quarantine. As of the code on 2026-09-20, the service and dashboard included.
-Modules are under `src/jev_watchdog/`; names are given so that every statement can be checked.
+Modules are under `src/jev_watchdog/`, one package per layer ([Source map](#source-map)). Module
+names are unique across the package, so `surfaces` below is `core/surfaces.py` and every statement
+can be checked.
 
 ## Overview
 
 `jev-watchdog run` is one asyncio process: an aiohttp application (`server.create_app`) with
-all state in memory in one `SurfaceRegistry`. It binds `127.0.0.1` only: `HOST` in `cli.py` is
+all state in memory in one `SurfaceRegistry`. It binds `127.0.0.1` only: `HOST` in `daemon/serve.py` is
 a constant, and `--port` (default 8787) is the only thing that moves. Next to the port it
 listens on a private unix socket, where `attach` reads what it draws (`state.add_routes`). `install` makes
 that same `run` a launchd agent or systemd user unit; nothing in the process daemonizes. The plugin
@@ -23,19 +25,51 @@ awaits nothing. A judging event is answered once its transcript is snapshotted (
 in a thread). The rest runs in background tasks: the transcript wait, judge calls, statistics,
 printing, the CUSUM and the quarantine itself.
 
+## Source map
+
+```text
+src/jev_watchdog/
+  cli.py            arguments, composition root; units run `-m jev_watchdog.cli`
+  replay.py         transcripts through the same registry, offline
+  core/             a hook event becomes a verdict, a verdict a quarantine
+    transcript.py     thread identity, transcript reading
+    pack.py           questions and the TOML pack loader
+    surfaces.py       SurfaceRegistry: routing, gate, queues, workers, trips
+    stats.py          read-only accumulators
+    decide.py         CUSUM per (thread, judge, question)
+    quarantine.py     who is quarantined, the deny body
+  judge/            the judge boundary and its backends
+    base.py  registry.py  jev.py  claude_agent.py  codex_exec.py  fake.py
+  display/          what is shown
+    printer.py        console line, run log, feed record
+    feed.py           ring of display records a dashboard polls
+    history.py        evidence per thread, for the charts
+  daemon/           running the watchdog and reaching a running one
+    server.py         the port's app: /hooks, control endpoints, request guard
+    state.py          the socket-only routes a dashboard reads
+    serve.py          the two sites, signals, shutdown
+    client.py         the one HTTP client
+    paths.py          state directory, socket path
+    service.py        install / uninstall: launchd, systemd
+  dashboard/        the Textual dashboard
+    tui.py            the app, one polling loop, the keys
+    draw.py           dicts in, Text and plots out
+tests/              the same tree: tests/core/test_decide.py is for core/decide.py
+```
+
 ## Layers
 
 Three programs share the package, and each can be read without the ones below it in this list.
 
-1. **The watchdog core**: `transcript`, `pack`, `judge/*`, `stats`, `decide`, `quarantine`,
-   `surfaces`, `server`, `replay`. A hook comes in, is judged, evidence accumulates, a thread
-   is quarantined, `PreToolUse` is denied. It knows nothing of dashboards or services.
-2. **What is shown**: `printer`, `feed`, `history`. The core touches this layer at two seams
+1. **The watchdog core**: `core/*`, `judge/*`, `daemon/server`, `replay`. A hook comes in, is
+   judged, evidence accumulates, a thread is quarantined, `PreToolUse` is denied. It knows
+   nothing of dashboards or services.
+2. **What is shown**: `display/*` (`printer`, `feed`, `history`). The core touches this layer at two seams
    and nowhere else: `Printer._emit` (every line, to the console, the run log and the feed)
    and `History.record` / `History.mark` (called in `SurfaceRegistry._record`, `_add`,
    `release` and `_tripped`). Neither decides anything or is read back by the core.
-3. **Looking and running**: `state` (the read routes), `client`, `tui` + `draw` (the
-   dashboard), `serve` (the two sites), `service` (launchd / systemd), `paths`. `client` imports
+3. **Looking and running**: the rest of `daemon/` (`state`, the read routes; `client`; `serve`,
+   the two sites; `service`, launchd / systemd; `paths`) and `dashboard/` (`tui` + `draw`). `client` imports
    nothing from the package; `tui` and `draw` see only JSON, and import `printer` for the one
    line renderer (`render_line`, `printable`) and `feed` for the ring's size. `service` imports only `pack`,
    `paths` and `judge/registry`, to check options the way `run` would.
@@ -98,30 +132,30 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
 | Module | Owns |
 |---|---|
 | `cli` | Arguments, API key, run log (0600), building the registry, dispatch to `serve`, `replay`, `service` and the control calls. |
-| `serve` | The two sites (port, private socket), signals, shutdown order; `dashboard` for `run --tui`, `attach`. |
-| `server` | aiohttp app of the port: `/hooks`, control endpoints, request guard, body cap. Knows nothing of the dashboard. |
-| `state` | What a dashboard reads and its routes (`add_routes`): `snapshot`, `/records`, `/history`, `/timeline`. |
-| `feed` | Ring buffer of display records with a rising `seq` and the process's `boot` id. |
-| `history` | Last 500 verdicts per thread and judge as shares of each rule's limit; quarantine, release and trip marks; `series` and the bucketed `timeline`. Decides nothing. |
-| `paths` | State directory (`$XDG_STATE_HOME/jev-watchdog`), socket path per port, 0700 directory. |
-| `client` | `Client`: the one HTTP client, `on_port` for the control subcommands, `on_socket` for the dashboard. |
-| `tui` | `WatchdogApp` (Textual): the widgets, one polling loop, the keys. |
-| `draw` | What the dashboard shows, as pure functions from the watchdog's dicts to `Text` and plots. |
-| `service` | `install` / `uninstall`: launchd plist, systemd unit, absolute `run` arguments. |
-| `surfaces` | `SurfaceRegistry`: routing, gate, transcript wait, queues, workers, trips. |
-| `transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `tool_result_end`. |
-| `decide` | `Decider`: CUSUM per (thread, judge, question). Pure logic, no I/O. |
-| `quarantine` | `Quarantines` book, main-thread scope, the `deny_body` text. |
-| `pack` | `Question` and the validating TOML pack loader; context wording. |
-| `stats` | Read-only accumulators: counts, EWMA, streaks, latency, lag, tokens, cost. |
-| `printer` | Display records, `render_line` (console and dashboard), JSONL run log, feed; `printable` makes control characters visible. |
 | `replay` | Cuts transcripts into steps, feeds `handle`, checks `.expect.toml`. |
+| `core/transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `tool_result_end`. |
+| `core/pack` | `Question` and the validating TOML pack loader; context wording. |
+| `core/surfaces` | `SurfaceRegistry`: routing, gate, transcript wait, queues, workers, trips. |
+| `core/stats` | Read-only accumulators: counts, EWMA, streaks, latency, lag, tokens, cost. |
+| `core/decide` | `Decider`: CUSUM per (thread, judge, question). Pure logic, no I/O. |
+| `core/quarantine` | `Quarantines` book, main-thread scope, the `deny_body` text. |
 | `judge/base` | `Judge` protocol, `JudgeRequest`, `Verdict`, shared payload and answer schema. |
 | `judge/registry` | `--judge` spec to judge (`JUDGES`); lazy backend imports. |
 | `judge/jev` | Jev through `typesafe_sdk`; error kinds; cost from input tokens. |
 | `judge/claude_agent` | Claude through `claude_agent_sdk`: one-shot query, no tools. |
 | `judge/codex_exec` | GPT through a `codex exec` subprocess, tool features disabled. |
 | `judge/fake` | Deterministic offline judge; `fake:WORD` marker mode. |
+| `display/printer` | Display records, `render_line` (console and dashboard), JSONL run log, feed; `printable` makes control characters visible. |
+| `display/feed` | Ring buffer of display records with a rising `seq` and the process's `boot` id. |
+| `display/history` | Last 500 verdicts per thread and judge as shares of each rule's limit; quarantine, release and trip marks; `series` and the bucketed `timeline`. Decides nothing. |
+| `daemon/server` | aiohttp app of the port: `/hooks`, control endpoints, request guard, body cap. Knows nothing of the dashboard. |
+| `daemon/state` | What a dashboard reads and its routes (`add_routes`): `snapshot`, `/records`, `/history`, `/timeline`. |
+| `daemon/serve` | The two sites (port, private socket), signals, shutdown order; `dashboard` for `run --tui`, `attach`. |
+| `daemon/client` | `Client`: the one HTTP client, `on_port` for the control subcommands, `on_socket` for the dashboard. |
+| `daemon/paths` | State directory (`$XDG_STATE_HOME/jev-watchdog`), socket path per port, 0700 directory. |
+| `daemon/service` | `install` / `uninstall`: launchd plist, systemd unit, absolute `run` arguments. |
+| `dashboard/tui` | `WatchdogApp` (Textual): the widgets, one polling loop, the keys. |
+| `dashboard/draw` | What the dashboard shows, as pure functions from the watchdog's dicts to `Text` and plots. |
 
 ## Invariants
 

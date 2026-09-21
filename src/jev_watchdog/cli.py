@@ -15,9 +15,14 @@ from pathlib import Path
 
 from rich.console import Console
 
-from jev_watchdog import service
-from jev_watchdog.client import Client, NotAWatchdog, Refused, Unreachable
-from jev_watchdog.feed import Feed
+from jev_watchdog.core.pack import PackError, Question, load_packs
+from jev_watchdog.core.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
+from jev_watchdog.daemon import service
+from jev_watchdog.daemon.client import Client, NotAWatchdog, Refused, Unreachable
+from jev_watchdog.daemon.paths import socket_path
+from jev_watchdog.daemon.serve import HOST, attach, dashboard, serve
+from jev_watchdog.display.feed import Feed
+from jev_watchdog.display.printer import Printer, printable
 from jev_watchdog.judge.base import Judge
 from jev_watchdog.judge.registry import (
     JUDGES,
@@ -27,12 +32,7 @@ from jev_watchdog.judge.registry import (
     make_judge,
     needs_key,
 )
-from jev_watchdog.pack import PackError, Question, load_packs
-from jev_watchdog.paths import socket_path
-from jev_watchdog.printer import Printer, printable
 from jev_watchdog.replay import ReplayError, load_case, run_cases
-from jev_watchdog.serve import HOST, attach, dashboard, serve
-from jev_watchdog.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
 
 DEFAULT_PORT = 8787
 DEFAULT_KEY_FILE = Path("prototype-throwaway-key")

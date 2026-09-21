@@ -10,8 +10,8 @@ import asyncio
 import hashlib
 import json
 
+from jev_watchdog.core.pack import Question
 from jev_watchdog.judge.base import Answer, JudgeError, JudgeRequest, Verdict
-from jev_watchdog.pack import Question
 
 
 class FakeJudge:

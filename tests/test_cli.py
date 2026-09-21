@@ -247,7 +247,7 @@ def test_output_that_is_not_a_terminal_is_wide_enough_for_the_tables(monkeypatch
 
 
 def test_attach_to_something_that_refuses_state_says_so_without_a_traceback(monkeypatch, capsys):
-    from jev_watchdog.client import Client, Refused
+    from jev_watchdog.daemon.client import Client, Refused
 
     async def refuses(self):
         raise Refused("HTTP 404")

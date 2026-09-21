@@ -4,10 +4,11 @@ import json
 import pytest
 from rich.console import Console
 
+from jev_watchdog.core.pack import Question
+from jev_watchdog.core.surfaces import SurfaceRegistry
+from jev_watchdog.display.printer import Printer
 from jev_watchdog.judge.base import Answer, JudgeRequest, Verdict
 from jev_watchdog.judge.fake import FakeJudge
-from jev_watchdog.pack import Question
-from jev_watchdog.printer import Printer
 from jev_watchdog.replay import (
     Case,
     Expectation,
@@ -19,7 +20,6 @@ from jev_watchdog.replay import (
     run_cases,
     steps_of,
 )
-from jev_watchdog.surfaces import SurfaceRegistry
 
 QUESTIONS = [
     Question("exfil", "noul", "i", flag_threshold=0.7),

@@ -4,8 +4,8 @@ import json
 from dataclasses import dataclass
 from typing import Protocol
 
-from jev_watchdog.pack import Question
-from jev_watchdog.transcript import SurfaceKey
+from jev_watchdog.core.pack import Question
+from jev_watchdog.core.transcript import SurfaceKey
 
 ERROR_KINDS = ("over_limit", "rate_limited", "auth", "timeout", "other")
 

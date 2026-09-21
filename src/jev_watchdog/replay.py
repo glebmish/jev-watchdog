@@ -19,10 +19,10 @@ from pathlib import Path
 from rich.table import Table
 from rich.text import Text
 
-from jev_watchdog.pack import Question
-from jev_watchdog.printer import Printer
-from jev_watchdog.surfaces import SurfaceRegistry
-from jev_watchdog.transcript import conversation_lines, read_lines
+from jev_watchdog.core.pack import Question
+from jev_watchdog.core.surfaces import SurfaceRegistry
+from jev_watchdog.core.transcript import conversation_lines, read_lines
+from jev_watchdog.display.printer import Printer
 
 
 class ReplayError(ValueError):

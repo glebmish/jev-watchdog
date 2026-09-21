@@ -1,0 +1,179 @@
+from pathlib import Path
+
+import pytest
+
+from jev_watchdog.core.pack import PackError, Question, load_pack, load_packs
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def write(tmp_path, body: str) -> Path:
+    path = tmp_path / "pack.toml"
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_default_pack_loads():
+    questions = load_pack(REPO / "pack.toml")
+    assert [q.id for q in questions] == [
+        "denied_target",
+        "denied_reroute",
+        "serves_goal",
+        "repeat_failed",
+        "exfil",
+        "bypass_intent",
+        "goal_drift",
+        "activity",
+        "against_context",
+    ]
+    by_id = {q.id: q for q in questions}
+    assert by_id["serves_goal"].flag_below == 0.3
+    assert by_id["goal_drift"].kind == "score" and len(by_id["goal_drift"].criteria) == 5
+    assert by_id["activity"].flag_choices == ("stuck", "off_task")
+
+
+def test_flags():
+    assert Question("q", "noul", "i", flag_threshold=0.7).flags(0.7)
+    assert not Question("q", "noul", "i", flag_threshold=0.7).flags(0.69)
+    assert Question("q", "noul", "i", flag_below=0.3).flags(0.3)
+    assert not Question("q", "noul", "i", flag_below=0.3).flags(0.31)
+    assert not Question("q", "noul", "i").flags(1.0)
+    choice = Question("q", "choice", "i", criteria={"a": "A", "b": "B"}, flag_choices=("b",))
+    assert choice.flags("b") and not choice.flags("a")
+
+
+@pytest.mark.parametrize(
+    "body, fragment",
+    [
+        ("", "no questions"),
+        ('[questions.q]\nkind = "bool"\ninstructions = "x"', "kind"),
+        ('[questions.q]\nkind = "noul"', "instructions"),
+        ('[questions.q]\nkind = "noul"\ninstructions = "x"\ncriteria = ["a","b"]', "criteria"),
+        ('[questions.q]\nkind = "score"\ninstructions = "x"\ncriteria = ["only"]', "criteria"),
+        ('[questions.q]\nkind = "choice"\ninstructions = "x"\ncriteria = ["a","b"]', "criteria"),
+        (
+            '[questions.q]\nkind = "noul"\ninstructions = "x"\nflag_threshold = 0.5\nflag_below = 0.1',
+            "flag_threshold",
+        ),
+        ('[questions.q]\nkind = "noul"\ninstructions = "x"\nflag_threshold = "0.7"', "number"),
+        ('[questions.q]\nkind = "noul"\ninstructions = "x"\nflag_below = true', "number"),
+        (
+            (
+                '[questions.q]\nkind = "choice"\ninstructions = "x"\nflag_choices = ["z"]\n'
+                '[questions.q.criteria]\na = "A"\nb = "B"'
+            ),
+            "flag_choices",
+        ),
+    ],
+)
+def test_invalid_packs_are_rejected(tmp_path, body, fragment):
+    with pytest.raises(PackError, match=fragment):
+        load_pack(write(tmp_path, body))
+
+
+def test_quarantine_rule_is_loaded(tmp_path):
+    path = tmp_path / "pack.toml"
+    path.write_text(
+        '[questions.exfil]\nkind = "noul"\ninstructions = "i"\n'
+        "quarantine_ref = 0.45\nquarantine_limit = 0.2\n"
+    )
+    (question,) = load_pack(path)
+    assert (question.quarantine_ref, question.quarantine_limit) == (0.45, 0.2)
+
+
+@pytest.mark.parametrize(
+    ("extra", "fragment"),
+    [
+        ("quarantine_ref = 0.4\n", "both"),
+        ("quarantine_limit = 0.2\n", "both"),
+        ("quarantine_ref = 0.4\nquarantine_limit = 0\n", "positive"),
+        ("quarantine_ref = 0.4\nquarantine_limit = 0.2\nflag_below = 0.3\n", "higher-is-worse"),
+    ],
+)
+def test_bad_quarantine_rules_are_rejected(tmp_path, extra, fragment):
+    path = tmp_path / "pack.toml"
+    path.write_text(f'[questions.q]\nkind = "noul"\ninstructions = "i"\n{extra}')
+    with pytest.raises(PackError, match=fragment):
+        load_pack(path)
+
+
+def test_choice_questions_take_no_quarantine_rule(tmp_path):
+    path = tmp_path / "pack.toml"
+    path.write_text(
+        '[questions.q]\nkind = "choice"\ninstructions = "i"\n'
+        "quarantine_ref = 0.4\nquarantine_limit = 0.2\n"
+        '[questions.q.criteria]\na = "x"\nb = "y"\n'
+    )
+    with pytest.raises(PackError, match="higher-is-worse"):
+        load_pack(path)
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'quarantine_ref = "x"\nquarantine_limit = 0.2\n',
+        'quarantine_ref = 0.4\nquarantine_limit = "x"\n',
+    ],
+)
+def test_quarantine_rule_values_must_be_numbers(tmp_path, extra):
+    path = tmp_path / "pack.toml"
+    path.write_text(f'[questions.q]\nkind = "noul"\ninstructions = "i"\n{extra}')
+    with pytest.raises(PackError, match="numbers"):
+        load_pack(path)
+
+
+def test_packs_are_merged_in_order(tmp_path):
+    first = tmp_path / "a.toml"
+    first.write_text('[questions.one]\nkind = "noul"\ninstructions = "i"\n')
+    second = tmp_path / "b.toml"
+    second.write_text('[questions.two]\nkind = "noul"\ninstructions = "i"\n')
+    assert [question.id for question in load_packs([first, second])] == ["one", "two"]
+    with pytest.raises(PackError, match="one.*defined in both"):
+        load_packs([first, first])
+
+
+def test_the_canary_pack_adds_a_trippable_rule_to_the_default_pack():
+    questions = load_packs([REPO / "pack.toml", REPO / "packs" / "canary.toml"])
+    canary = questions[-1]
+    assert canary.id == "canary" and canary.quarantine_limit is not None
+    assert "canary" in canary.instructions
+
+
+def test_a_question_can_be_reserved_for_sessions_with_a_context(tmp_path):
+    path = tmp_path / "pack.toml"
+    path.write_text(
+        '[questions.a]\nkind = "noul"\ninstructions = "i"\nneeds_context = true\n'
+        '[questions.b]\nkind = "noul"\ninstructions = "i"\n'
+    )
+    assert [q.needs_context for q in load_pack(path)] == [True, False]
+    path.write_text('[questions.a]\nkind = "noul"\ninstructions = "i"\nneeds_context = "yes"\n')
+    with pytest.raises(PackError, match="needs_context"):
+        load_pack(path)
+
+
+def test_a_question_can_be_worded_differently_for_sessions_with_a_context(tmp_path):
+    path = write(
+        tmp_path,
+        '[questions.a]\nkind = "noul"\ninstructions = "plain"\n'
+        'context_instructions = "with context"\n'
+        '[questions.b]\nkind = "noul"\ninstructions = "only plain"\n'
+        '[questions.c]\nkind = "noul"\ninstructions = "context only"\nneeds_context = true\n',
+    )
+    a, b, c = load_pack(path)
+    assert [q.instructions for q in (a.asked(False), b.asked(False))] == ["plain", "only plain"]
+    assert c.asked(False) is None
+    asked = [q.asked(True) for q in (a, b, c)]
+    assert [q.instructions for q in asked] == ["with context", "only plain", "context only"]
+    assert asked[0].id == "a"
+
+    with pytest.raises(PackError, match="context_instructions"):
+        load_pack(write(tmp_path, '[questions.a]\nkind = "noul"\ninstructions = "i"\n'
+                                  'context_instructions = ""\n'))  # fmt: skip
+
+
+def test_the_default_pack_words_goal_questions_for_a_context():
+    by_id = {q.id: q for q in load_pack(REPO / "pack.toml")}
+    for qid in ("serves_goal", "goal_drift"):
+        assert "user_context" not in by_id[qid].instructions
+        assert "user_context" in by_id[qid].context_instructions
+    assert by_id["against_context"].needs_context
