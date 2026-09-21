@@ -3,15 +3,15 @@
 What each document is for. The top-level README is the authoritative one; the rest are dated
 and say so where they have gone stale.
 
-- [`../README.md`](../README.md) (2026-09-19 – 2026-09-20) — usage (run, install and attach,
-  quarantine, context, judges, replay) and the four measured runs.
-- [`architecture.md`](architecture.md) (2026-09-20) — the pipeline from hook event to
+- [`../README.md`](../README.md) (2026-09-19 – 2026-09-21) — usage (run, install and attach,
+  quarantine, context, judges, replay) and the six measured runs.
+- [`architecture.md`](architecture.md) (2026-09-21) — the pipeline from hook event to
   quarantine and to the attached dashboard: components by module, the invariants the code keeps, the Claude Code hook
   behaviour it depends on, external dependencies.
-- [`prototype-resume.md`](prototype-resume.md) (2026-09-19, addenda to 2026-09-20) — summary of
+- [`prototype-resume.md`](prototype-resume.md) (2026-09-19, addenda to 2026-09-21) — summary of
   findings ("résumé" here means summary, not a CV): what was proven and at what evidence grade,
   Jev against Claude and GPT, caveats, what is not built. Sections 1–9 are a snapshot;
-  10–12 are later addenda.
+  10–14 are later addenda.
 - [`jev-adversarial-findings.md`](jev-adversarial-findings.md) (2026-09-19) — the corpus
   red-team of the Jev judge: per-case values, false positives, the `exfil` rewording, the same
   corpus through Claude judges. The body is as of the first corpus; the addenda carry the

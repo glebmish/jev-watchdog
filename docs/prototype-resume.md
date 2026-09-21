@@ -1,7 +1,7 @@
 # jev-watchdog prototype: résumé (2026-09-19)
 
 > **Snapshot.** Sections 1–9 describe the prototype as of the early evening of 2026-09-19,
-> before quarantine, session context and the Codex judge existed. Sections 10–12 and the
+> before quarantine, session context and the Codex judge existed. Sections 10–14 and the
 > top-level [README](../README.md) supersede them where they differ.
 
 Follow-up to a design chat about a Jev-powered agent watchdog. "The v0 design" below is the

@@ -8,9 +8,9 @@ as documentation of what it is now.
   [README](../../README.md) differ, the README is authoritative.
 - The plans' checkboxes were never ticked: execution was tracked elsewhere. The work is
   finished.
-- Later features — session context, the Codex judge, the transcript wait, `--pack` merging —
-  have no spec. They are documented in the top-level README and in
-  [`prototype-resume.md`](../prototype-resume.md), sections 10–12.
+- Later features — session context, the Codex judge, the transcript wait, `--pack` merging,
+  transcript trimming and compaction — have no spec. They are documented in the top-level README and in
+  [`prototype-resume.md`](../prototype-resume.md), sections 10–14.
 - The daemon spec's event stream (`/events`, server-sent events, feed subscribers) was replaced
   by polling `/records` when the project was simplified on 2026-09-20; `attach.py` and
   `control.py` became `client.py`, and serving moved from `cli.py` to `serve.py`. The spec's limit "never

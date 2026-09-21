@@ -1,6 +1,7 @@
 # Architecture
 
-How a hook event becomes a verdict, and a verdict a quarantine. As of the code on 2026-09-20, the service and dashboard included.
+How a hook event becomes a verdict, and a verdict a quarantine. As of the code on 2026-09-21,
+the service and dashboard included.
 Modules are under `src/jev_watchdog/`, one package per layer ([Source map](#source-map)). Module
 names are unique across the package, so `surfaces` below is `core/surfaces.py` and every statement
 can be checked.
@@ -32,7 +33,8 @@ src/jev_watchdog/
   cli.py            arguments, composition root; units run `-m jev_watchdog.cli`
   replay.py         transcripts through the same registry, offline
   core/             a hook event becomes a verdict, a verdict a quarantine
-    transcript.py     thread identity, transcript reading
+    transcript.py     thread identity, transcript reading, lines trimmed to the conversation
+    compact.py        what a judge is sent of a long thread, by its own verdicts
     pack.py           questions and the TOML pack loader
     surfaces.py       SurfaceRegistry: routing, gate, queues, workers, trips
     stats.py          read-only accumulators
@@ -102,6 +104,8 @@ SurfaceRegistry.handle                           SurfaceRegistry.quarantine | re
   |             v  Job(event, lines, context)
   |         one queue and worker per (surface, judge)       _enqueue, _work
   |             v
+  |         compact.compacted(lines, the judge's standings)  unless --no-compact
+  |             v
   |         Judge.judge(JudgeRequest) --> Verdict           jev | claude | codex | fake
   |             v
   |         _record: SurfaceStats, GlobalStats, Printer (console, runs/<timestamp>.jsonl)
@@ -133,7 +137,8 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
 |---|---|
 | `cli` | Arguments, API key, run log (0600), building the registry, dispatch to `serve`, `replay`, `install` and the control calls. |
 | `replay` | Cuts transcripts into steps, feeds `handle`, checks `.expect.toml`. |
-| `core/transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `tool_result_end`. |
+| `core/transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `trimmed_lines`, `tool_result_end`. |
+| `core/compact` | `standing`: how a judge left an action (benign, flagged, unsure; `BENIGN_CUTOFF` 0.15). `compacted`: the last `RECENT_ACTIONS` (20) whole, the rest by standing, under `STATE_BUDGET_BYTES` (64 000). Pure logic, no I/O. |
 | `core/pack` | `Question` and the validating TOML pack loader; context wording. |
 | `core/surfaces` | `SurfaceRegistry`: routing, gate, transcript wait, queues, workers, trips. |
 | `core/stats` | Read-only accumulators: counts, EWMA, streaks, latency, lag, tokens, cost. |
@@ -234,7 +239,15 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
   remembered, which is about 3 s per 1000.
 - **Fails open, state in memory.** `Quarantines`, `Decider` and `contexts` are plain dicts; a
   restart forgets them. `MAX_BODY_BYTES` is 64 MiB because a 413 would mean allow;
-  `Printer._log` drops the run log on a write error rather than fail a deny.
+  `Printer._emit` drops the run log on a write error rather than fail a deny.
+- **A long thread is compacted per judge, by that judge's own verdicts.** `_judge` keeps each
+  tool call's `compact.standing` on the `Surface`, by judge name and tool-use id, first verdict
+  wins. `compact.compacted` sends the last 20 actions whole. Of the older ones, those the judge
+  found benign become a count; a flagged action and any error or denial stay whole; the rest
+  keep their command and lose their output. Over `STATE_BUDGET_BYTES` the oldest lines are
+  dropped, never what the human said nor the action being judged. The budget is the default of
+  `compacted` and has no flag; `--no-compact` (`SurfaceRegistry(compact=False)`) sends every
+  judgment the whole thread.
 - **Every backend gets the same request.** `request_payload` / `build_prompt` in `judge/base`
   produce Jev's body (`state`, `questions`); `request_state` adds `user_context` only when
   there is a context. `answer_schema` and `schema_answers` stand in for Jev's typed answers.
