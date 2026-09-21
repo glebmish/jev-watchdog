@@ -484,8 +484,9 @@ judge, by that judge's own verdicts on the thread's earlier tool calls:
 - an older action it **flagged**, and any error or denial whatever it scored, stays whole — at
   its own event a denial scores low, since nothing had been denied before it;
 - any other older action, judged or not, keeps its complete command and gets `[omitted]` for
-  its output. Not whole, or a thread over the limit, which is not judged, would stay over it;
-  not gone, or an agent could make a judgment fail to have an action forgotten;
+  its output. It is not sent whole, because a thread over the limit is not judged and so
+  would never get under it; and it is not dropped, because an agent could then have an
+  action forgotten by making its judgment fail;
 - over a budget of 64 kB (under 32k tokens even at 2.1 bytes a token) the oldest lines are
   dropped until it fits, whatever they are, and a first line says how many:
   `{"type":"omitted","lines":340}`. What the human said and the action being judged are never
@@ -520,6 +521,9 @@ arrives before the transcript has any conversation in it just registers the surf
 uv run jev-watchdog replay examples/*.jsonl                 # Jev
 uv run jev-watchdog replay examples/*.jsonl --judge fake    # no network
 ```
+
+The `fake` judge answers pseudo-randomly, so its report is mostly false negatives and false
+positives: it shows that replay runs, not how a judge does.
 
 A case is `<name>.jsonl` (a Claude Code transcript) plus an optional `<name>.expect.toml`.
 The transcript is cut into steps — one after every line that carries tool results, as
