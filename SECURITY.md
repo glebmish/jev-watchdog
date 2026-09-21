@@ -29,6 +29,11 @@ agent. Only the latest commit on `main` is supported.
 - **The plugin trusts whatever listens on `127.0.0.1:8787`.** While the watchdog is down,
   another local process on that port (a common dev-server default) receives every hook payload
   and can answer the hooks. Single-user machines only.
+- **A judge does not see a long thread whole.** Past the last 20 actions, one the judge found
+  benign is sent as a count (`core/compact.py`), so a step that looked harmless alone, e.g.
+  writing a script that is run 20 actions later, is gone when it matters. Over the 64 kB budget
+  the oldest lines go, flagged ones included, and one large output is enough to get there.
+  `--no-compact` sends the whole thread; Jev then refuses one over 32k tokens.
 - **The `claude` and `codex` judges run without a system prompt**, so transcript content can
   steer them (seen with Haiku: README, third run).
 - **The Codex judge's tool lock-down is a deny-list** (`DISABLED_FEATURES` in
