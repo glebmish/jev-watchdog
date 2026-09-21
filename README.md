@@ -150,7 +150,7 @@ from a clone: the default question pack is `pack.toml` in the working directory.
 ```bash
 git clone https://github.com/glebmish/jev-watchdog && cd jev-watchdog
 uv sync
-uv run jev-watchdog run --enforce --judge fake:canary   # no key: try it now, see "Testing it end to end"
+uv run jev-watchdog run --enforce --judge fake:canary   # no key: try it now, see "Testing it end to end" under Quarantine
 uv run jev-watchdog run                 # Jev judge; key from TYPESAFE_API_KEY or the file ./prototype-throwaway-key
 uv run jev-watchdog run --enforce       # ...and reject the tool calls of quarantined threads
 uv run jev-watchdog run --judge fake    # offline, deterministic pseudo-random answers
@@ -170,7 +170,7 @@ That covers one session. For every Claude Code session on the machine, install t
 from the marketplace this repo is (`.claude-plugin/marketplace.json`, one plugin):
 
 ```bash
-claude plugin marketplace add /path/to/jev-watchdog
+claude plugin marketplace add glebmish/jev-watchdog    # or /path/to/jev-watchdog, your clone
 claude plugin install jev-watchdog-hooks@jev-watchdog
 ```
 
