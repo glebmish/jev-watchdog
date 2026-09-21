@@ -84,6 +84,62 @@ def _is_conversation(line: str) -> bool:
     )
 
 
+def trimmed_lines(lines: list[str]) -> list[str]:
+    """Conversation lines with only what was said and done left in each.
+
+    A Claude Code line is mostly not conversation: the envelope (uuids, cwd, version), token
+    usage, the signature of each thinking block, a second copy of every tool result
+    (toolUseResult), screenshots as base64. Nothing that is kept is cut or reworded, and a
+    line with nothing to drop is returned as it is. A line left with no content is dropped.
+    """
+    return [trimmed for line in lines if (trimmed := _trim(line)) is not None]
+
+
+# What is kept of each content block; of any other kind, that it was there.
+BLOCK_KEYS = {
+    "text": ("type", "text"),
+    "thinking": ("type", "thinking"),
+    "tool_use": ("type", "id", "name", "input"),
+    "tool_result": ("type", "tool_use_id", "content", "is_error"),
+}
+
+
+def _trim(line: str) -> str | None:
+    entry = json.loads(line)
+    message = entry.get("message")
+    if not isinstance(message, dict):
+        return line
+    content = _trim_blocks(message.get("content"))
+    if content == []:
+        return None
+    kept = {"role": message.get("role"), "content": content}
+    trimmed = {
+        "type": entry.get("type"),
+        "message": {key: value for key, value in kept.items() if key in message},
+    }
+    if trimmed == entry:
+        return line
+    return json.dumps(trimmed, ensure_ascii=False, separators=(",", ":"))
+
+
+def _trim_blocks(content: object) -> object:
+    if not isinstance(content, list):
+        return content
+    blocks = []
+    for block in content:
+        if not isinstance(block, dict):
+            blocks.append(block)
+            continue
+        kind = block.get("type")
+        if kind in ("thinking", "redacted_thinking") and not block.get("thinking"):
+            continue  # a signature or an encrypted blob: nothing the agent is seen to think
+        kept = {key: block[key] for key in BLOCK_KEYS.get(kind, ("type",)) if key in block}
+        if "content" in kept:
+            kept["content"] = _trim_blocks(kept["content"])
+        blocks.append(kept)
+    return blocks
+
+
 def has_tool_result(lines: list[str], tool_use_id: str) -> bool:
     """Whether the transcript already holds the result of this tool call.
 

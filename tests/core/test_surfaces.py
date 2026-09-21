@@ -58,6 +58,21 @@ async def test_one_surface_per_agent_thread(make_payload, subagent_transcript, o
     await registry.shutdown()
 
 
+async def test_the_judge_gets_each_line_without_the_harness_around_it(
+    make_payload, transcript, out
+):
+    said = {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}
+    line = {"type": "assistant", "uuid": "77aa", "cwd": "/work", "message": {**said, "usage": {}}}
+    transcript.write_text(json.dumps(line) + "\n", encoding="utf-8")
+    judge = FakeJudge()
+    registry = make_registry(judge, out)
+    await registry.handle(make_payload("Stop"))
+    await registry.drain()
+    [sent] = judge.calls[0].transcript_lines
+    assert json.loads(sent) == {"type": "assistant", "message": said}
+    await registry.shutdown()
+
+
 async def test_judges_only_judging_events_with_raw_transcript(make_payload, out):
     judge = FakeJudge()
     registry = make_registry(judge, out)

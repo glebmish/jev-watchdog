@@ -96,7 +96,7 @@ SurfaceRegistry.handle                           SurfaceRegistry.quarantine | re
   |     +-- PreToolUse --> _gate: Quarantines.blocking --> deny body | empty 200
   |     +-- SessionStart, SubagentStart: register, print    SessionEnd: end mark to workers
   |     +-- judging events, under the Surface.arrival lock:
-  |           _snapshot     read_lines + conversation_lines, in a thread
+  |           _snapshot     read_lines + conversation_lines + trimmed_lines, in a thread
   |           _own_lines    cut just after the event's own tool_result
   |           not there yet --> intake queue; _caught_up polls, up to --transcript-wait
   |             v  Job(event, lines, context)
@@ -268,7 +268,8 @@ that day (the `bypassPermissions` row): observed, version-pinned, not re-verifie
 
 - **TypeSafe API** through `typesafe-sdk` (`judge/jev`). Key from `TYPESAFE_API_KEY`, else the
   `--key-file` (`cli.resolve_api_key`); the variable is then dropped from the environment.
-  32k-token state limit and no windowing: a long session shows up as `over_limit` errors.
+  32k-token state limit and no windowing: lines are trimmed to the conversation
+  (`transcript.trimmed_lines`), but a long session still shows up as `over_limit` errors.
 - **Claude Agent SDK** and the local Claude Code login, to which usage is billed. It starts a
   `claude` process per judgment: 4.3–6.5 s p50, ~1.2–1.6k harness tokens that cannot be removed.
 - **Codex CLI** and a ChatGPT login (`codex login`). The feature list is pinned to codex 0.153

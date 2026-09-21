@@ -40,7 +40,7 @@ deny body for a quarantined thread, so "empty 200, always" holds for every other
 Claude Code ──hooks (http POST)──► 127.0.0.1:8787/hooks ── empty 200, always
                                         │
                      surface = (session_id, agent_id | "main")
-                     snapshot transcript at receipt → keep user/assistant lines, unmodified
+                     snapshot transcript at receipt → keep user/assistant lines, trimmed (section 13)
                                         │
               one queue + worker per (surface, judge): serial per judge, concurrent otherwise
                                         │
@@ -375,3 +375,19 @@ off, read-only sandbox) next to the existing Agent SDK judge. Table and details:
 - Codex has no "no tools" switch and no turn limit; the judge is disarmed rather than toolless
   (a live test tells it to write, run and spawn, and checks that nothing happens). The flag
   list is tied to codex 0.153.
+
+## 13. Addendum: lines trimmed to the conversation (2026-09-21)
+
+The state was still "the JSONL lines as they are", and on real sessions that is mostly not
+conversation: `toolUseResult` (a second copy of every tool result), the line envelope, thinking
+signatures, token usage, screenshots as base64. `transcript.trimmed_lines` now keeps `type`,
+`role` and `content` of each line and, per block, only what was said or done; nothing kept is
+cut, a line with nothing to drop is sent as it is (the whole corpus — so the fitted numbers
+stand), and non-text blocks are sent as their `type`.
+
+- 30 real sessions: totals 3–20× smaller; live, one session 6,036 → 1,302 tokens with every
+  answer within 0.01.
+- The 32k wall moved from action 4–13 to action 14–41, no further: what remains is tool
+  input and output at ~0.8–1.3k tokens per action. The "No window" defect of section 7 stands,
+  and the measured next step is the same as in section 9: clip old tool output, window the
+  tail, pin the user's prompts — then rerun the corpus, because that does change its input.

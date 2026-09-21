@@ -49,17 +49,17 @@ transcript. Measured on the corpus:
 | "I asked for that refactor elsewhere" | a drifting session: `serves_goal` 0.05 → 0.64–0.75, no longer flagged |
 | "This machine must stay offline" | a plain `pip install`, harmless anywhere else: `against_context` 0.78–0.84 |
 
-**Nothing here is optimised yet.** Every judgment re-sends the thread's whole conversation,
+**Little here is optimised yet.** Every judgment re-sends the thread's whole conversation,
 from the beginning, over again: no window, no summary, no diff of what changed since the last
-event, no reuse between the judges. The three judgments of the short run below cost
-2.7k → 3.8k → 5.0k tokens; an `Explore` subagent that spent twenty seconds grepping and reading
-four small files was judged eight times, 2.7k → 10.4k tokens, each judgment re-reading
-everything the one before it had already read. Dropping Claude Code's bookkeeping lines already
-cut a real transcript by 94%
-([second run](#second-run-with-trimming-2026-09-19)), and that is the only trimming there is,
-so a long enough session walks into Jev's 32k-token state limit and starts erroring. A tail
-window with the user's prompts pinned is the obvious next step; it is not built
-([What is sent](#what-is-sent)).
+event, no reuse between the judges. What is trimmed is structure, never content: Claude Code's
+bookkeeping lines are dropped (94% of a young transcript,
+[second run](#second-run-with-trimming-2026-09-19)), and each line that is left is cut down to
+what was said and done (another 3–20× on long sessions,
+[fifth run](#fifth-run-lines-trimmed-to-the-conversation-2026-09-21)). Tool inputs and outputs
+are sent whole, so the state still grows with every action: on 30 real sessions Jev's 32k-token
+state limit came at action 14–41 instead of 4–13, and after it every judgment is an
+`over_limit` error. A tail window with the user's prompts pinned is the obvious next step; it
+is not built ([What is sent](#what-is-sent)).
 
 ## A session, start to stop
 
@@ -449,13 +449,30 @@ run log keeps the original bytes.
 ## What is sent
 
 Only the conversation, and all of it, every time: transcript lines of type `user` or
-`assistant` that are not `isMeta`, each byte-identical to the file (a line cut mid-character is not valid JSON yet and
-is left out until it is complete). Harness bookkeeping (attachments such as skill
-listings and prompt snapshots, queue operations, system notes) is dropped — it was ~75%
-of a young transcript. That is the whole of the state construction: no window, no summary, no
-diff against what the judge was sent a moment ago, nothing cached or shared between judges, so
-every event pays for the whole thread again and a long enough session exceeds Jev's 32k-token
-state limit and shows up as `over_limit` errors. A session with a
+`assistant` that are not `isMeta` (a line cut mid-character is not valid JSON yet and is left
+out until it is complete). Harness bookkeeping (attachments such as skill listings and prompt
+snapshots, queue operations, system notes) is dropped — it was ~75% of a young transcript.
+
+Of each line, only what was said and done is kept: `type`, and the message's `role` and
+`content`. Of the content blocks: the text; the thinking, without its signature; a tool call's
+`id`, `name` and whole `input`; a tool result's `tool_use_id`, `is_error` and text. Anything
+else in a block's place — a screenshot as base64, a document — is sent as its `type` alone, so
+the judge sees that it was there. What goes is the envelope (uuids, `cwd`, version, request
+ids), token `usage`, thinking signatures and `toolUseResult`, Claude Code's second copy of
+every tool result; a line left with nothing in it (thinking that is only a signature) goes
+too. Nothing that is kept is cut or reworded — a command can carry its point in the middle —
+and a line with nothing to drop is sent byte-identical to the file, which is every line of the
+example corpus, so the fitted thresholds stand. One tool call and its result:
+
+```json
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_01Rd…","name":"Bash","input":{"command":"ls -a","description":"List all files"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01Rd…","content":".\n..\nnotes.txt","is_error":false}]}}
+```
+
+That is the whole of the state construction: no window, no summary, no diff against what the
+judge was sent a moment ago, nothing cached or shared between judges, so every event pays for
+the whole thread again and a long enough session exceeds Jev's 32k-token state limit and shows
+up as `over_limit` errors. A session with a
 [context](#context-what-you-know-and-the-agent-does-not) sends
 `{"user_context": "...", "transcript": [lines]}` instead of the bare list of lines.
 
@@ -530,7 +547,7 @@ uv run pytest -m live    # real Jev calls (needs a key), real Claude and Codex c
 
 ## Measured runs
 
-Four dated lab notes, oldest first. Each describes the code as it was on its date; the
+Five dated lab notes, oldest first. Each describes the code as it was on its date; the
 sections above describe it as it is now.
 
 ### First run (2026-09-19)
@@ -639,6 +656,29 @@ runs, so quarantine expectations, which need one unbroken run, are left out: 87 
   196 judgments into the second run. At one judgment per hook event that is well under an
   hour of one busy agent, and it locks the human out of Codex as well. Sonnet 5 still loses
   ~8% of its judgments to the one-turn limit (11 of 145).
+
+### Fifth run: lines trimmed to the conversation (2026-09-21)
+
+Each line cut down to `type`, `role` and `content` ([What is sent](#what-is-sent)); no content
+is cut. Measured offline on the 30 real Claude Code sessions of this repository (81–199 actions
+in the long ones), and live on one headless session (Claude Code 2.1.278, jev-latest).
+
+- **Where a long session's bytes were:** 33–91% tool output, of which half is `toolUseResult`,
+  a second copy of each result, and the largest single items base64 screenshots (up to 660 kB);
+  4–32% line envelope; 2–15% thinking signatures; 2–9% token usage. What the user and the agent
+  said is under 2%.
+- **Totals shrink 3–20×** (the three longest: 8.2 → 0.84 MB, 4.8 → 0.23 MB, 2.3 → 0.65 MB).
+- **Live, same five-event session, same final state:** 6,036 → 1,302 input tokens, every
+  answer within 0.01 of the untrimmed one. Judgments ran 835 → 1.3k tokens, roughly
+  0.7–0.8k of which is the eight questions.
+- **It does not make a long session survivable.** The 32k limit moved from action 4–13 to
+  action 14–41. What is left is content — Bash output 30%, Bash commands 22%, file reads 10%,
+  written files 7% — at roughly 0.8–1.3k tokens per action. Only cutting content (clipped tool
+  output, a window) bounds that; none of it is built.
+- Sending the lines as JSON objects instead of JSON strings would save the escaping: 5%. Not
+  done, since it changes the shape the thresholds were fitted on.
+- The example corpus is untouched by the trimming (its lines were written bare), which a test
+  holds, so no rerun was needed.
 
 ## Further reading
 

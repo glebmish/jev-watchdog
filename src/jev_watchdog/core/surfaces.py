@@ -24,6 +24,7 @@ from jev_watchdog.core.transcript import (
     resolve_transcript_path,
     surface_key,
     tool_result_end,
+    trimmed_lines,
 )
 from jev_watchdog.display.history import History
 from jev_watchdog.display.printer import Printer
@@ -256,7 +257,9 @@ class SurfaceRegistry:
         try:
             # In a thread: the event loop also answers PreToolUse, and a large or slow file
             # must not make the deny of a quarantined thread time out.
-            return await asyncio.to_thread(lambda: conversation_lines(read_lines(path)))
+            return await asyncio.to_thread(
+                lambda: trimmed_lines(conversation_lines(read_lines(path)))
+            )
         except FileNotFoundError:
             return []  # session start: the hook fires before the transcript exists
         except OSError as exc:
