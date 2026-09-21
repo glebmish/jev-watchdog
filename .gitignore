@@ -44,3 +44,6 @@ Thumbs.db
 .vscode/
 *.swp
 *~
+
+# which real session logs may be used for evaluation; names private projects
+eval-projects.toml
