@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from jev_watchdog.core.compact import compacted, standing
 from jev_watchdog.core.decide import TOOL_EVENTS, Decider, Trip
 from jev_watchdog.core.pack import Question
 from jev_watchdog.core.quarantine import Quarantine, Quarantines
@@ -104,6 +105,9 @@ class Surface:
     # overtake an earlier one.
     arrival: asyncio.Lock = field(default_factory=asyncio.Lock)
     backlog: int = 0
+    # How each judge left the tool calls it judged, by judge name and tool_use_id: True benign,
+    # False flagged. It decides what that judge is sent of the thread again (compact).
+    standings: dict[str, dict[str, bool]] = field(default_factory=dict)
     label_override: str | None = None  # replayed cases are named, not truncated ids
     # For whoever looks at the watchdog (state.snapshot): which threads are alive.
     last_event: str | None = None
@@ -125,6 +129,7 @@ class SurfaceRegistry:
         transcript_wait_s: float = TRANSCRIPT_WAIT_S,
         context: str | None = None,
         thread_ttl: timedelta = THREAD_TTL,
+        compact: bool = True,
     ) -> None:
         names = [judge.name for judge in judges]
         if len(set(names)) != len(names):
@@ -143,6 +148,7 @@ class SurfaceRegistry:
         # they would do. Only the first judge's trips quarantine, and only when enforcing.
         self.enforce = enforce
         self.transcript_wait_s = transcript_wait_s
+        self.compact = compact  # False: every judgment is sent the whole thread
         self.decider = Decider(questions)
         self.history = History(self.decider.rules)  # for the dashboard's charts; decides nothing
         self.quarantines = Quarantines()
@@ -446,10 +452,18 @@ class SurfaceRegistry:
             finally:
                 queue.task_done()
 
-    async def _judge(self, surface: Surface, judge: Judge, job: Job) -> None:
+    def _asked(self, job: Job) -> list[Question]:
         asked = (question.asked(job.context is not None) for question in self.questions)
-        questions = [question for question in asked if question is not None]
-        request = JudgeRequest(surface.key, job.event, job.transcript_lines, questions, job.context)
+        return [question for question in asked if question is not None]
+
+    async def _judge(self, surface: Surface, judge: Judge, job: Job) -> None:
+        questions = self._asked(job)
+        # Here and not at the snapshot: the worker is serial, so by now this judge has
+        # answered for every earlier event of the thread.
+        lines = job.transcript_lines
+        if self.compact:
+            lines = compacted(lines, surface.standings.get(judge.name, {}))
+        request = JudgeRequest(surface.key, job.event, lines, questions, job.context)
         try:
             verdict = await judge.judge(request)
             self._record(surface, judge, job, verdict)
@@ -464,6 +478,10 @@ class SurfaceRegistry:
         self.stats.judge(judge.name).record_verdict(verdict, lag_ms)
         step = job.event.get("replay_step")
         self.printer.verdict(surface.label, judge.name, verdict, flagged, step, job.context)
+        tool_use_id = job.event.get("tool_use_id")
+        left = standing(self._asked(job), verdict)
+        if job.event.get("hook_event_name") in TOOL_EVENTS and tool_use_id and left is not None:
+            surface.standings.setdefault(judge.name, {}).setdefault(tool_use_id, left)
         trip = self.decider.fold(surface.key, judge.name, job.event, verdict)
         self.history.record(
             surface.key,

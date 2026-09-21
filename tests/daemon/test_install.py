@@ -66,8 +66,10 @@ def test_run_arguments_are_absolute_and_log_to_the_state_dir(tmp_path, monkeypat
 def test_run_arguments_keep_what_was_asked_about_logs_keys_and_waiting(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     args = parsed("--key-file", "key", "--log", "one.jsonl", "--transcript-wait", "0.5",
-                  "--claude-thinking", "--judge", "jev", "--judge", "claude:claude-haiku-4-5")  # fmt: skip
+                  "--claude-thinking", "--no-compact",
+                  "--judge", "jev", "--judge", "claude:claude-haiku-4-5")  # fmt: skip
     arguments = run_arguments(args, Path("/state"))
+    assert "--no-compact" in arguments
     assert arguments[-2:] == ["--log", str(tmp_path / "one.jsonl")]
     assert "--log-dir" not in arguments
     assert ["--key-file", str(tmp_path / "key")] == arguments[-4:-2]
@@ -75,6 +77,7 @@ def test_run_arguments_keep_what_was_asked_about_logs_keys_and_waiting(tmp_path,
     args = parsed("--judge", "fake", "--log-dir", "logs")
     assert run_arguments(args, Path("/state"))[-2:] == ["--log-dir", str(tmp_path / "logs")]
     assert "--key-file" not in run_arguments(args, Path("/state"))  # no jev judge: no key
+    assert "--no-compact" not in run_arguments(args, Path("/state"))
 
 
 def test_the_plist_restarts_a_crash_not_a_stop_and_carries_the_path():

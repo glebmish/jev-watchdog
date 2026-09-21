@@ -133,6 +133,14 @@ def _add_judging_options(command: argparse.ArgumentParser) -> None:
         "packs/canary.toml adds an easy-to-trip rule for end-to-end tests. Default: pack.toml",
     )
     command.add_argument(
+        "--no-compact",
+        dest="compact",
+        action="store_false",
+        help="send every judgment the whole thread. Default: of the actions older than the "
+        "last 20, a judge is sent again only what it did not find benign "
+        "(README, What is sent)",
+    )
+    command.add_argument(
         "--context",
         default=None,
         metavar="TEXT",
@@ -216,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
             enforce=args.enforce,
             transcript_wait_s=args.transcript_wait,
             context=(args.context or "").strip() or None,
+            compact=args.compact,
         )
         if args.command == "replay":
             return asyncio.run(_replay(args.cases, registry, printer, questions))

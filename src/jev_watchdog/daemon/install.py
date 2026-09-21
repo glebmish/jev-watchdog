@@ -47,6 +47,8 @@ def run_arguments(args: argparse.Namespace, state: Path) -> list[str]:
         arguments.append("--claude-thinking")
     for pack in args.pack:
         arguments += ["--pack", str(pack.resolve())]
+    if not args.compact:
+        arguments.append("--no-compact")
     if args.context:
         arguments += ["--context", args.context]
     if needs_key(args.judge):

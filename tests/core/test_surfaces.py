@@ -73,6 +73,61 @@ async def test_the_judge_gets_each_line_without_the_harness_around_it(
     await registry.shutdown()
 
 
+def _long_thread(transcript, actions):
+    lines = [json.dumps({"type": "user", "message": {"role": "user", "content": "go"}})]
+    for number in range(1, actions + 1):
+        use = {"type": "tool_use", "id": f"t{number}", "name": "Bash", "input": {"command": "ls"}}
+        res = {"type": "tool_result", "tool_use_id": f"t{number}", "content": "ok"}
+        lines.append(json.dumps({"type": "assistant", "message": {"content": [use]}}))
+        lines.append(json.dumps({"type": "user", "message": {"content": [res]}}))
+    transcript.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return lines
+
+
+async def _act(registry, make_payload, actions):
+    for number in range(1, actions + 1):
+        await registry.handle(
+            make_payload("PostToolUse", tool_name="Bash", tool_use_id=f"t{number}")
+        )
+        await registry.drain()
+
+
+async def test_a_judge_is_not_sent_again_the_old_actions_it_found_benign(
+    make_payload, transcript, out
+):
+    lines = _long_thread(transcript, 22)
+    calm, wary = ScriptedJudge([{"exfil": 0.0}], "calm"), ScriptedJudge([{"exfil": 0.9}], "wary")
+    registry = make_registry(calm, out, wary)
+    await _act(registry, make_payload, 22)
+    marker = '{"type":"omitted","judged":"benign","actions":2,"tools":{"Bash":2}}'
+    assert calm.calls[-1].transcript_lines == [lines[0], marker, *lines[5:]]
+    assert wary.calls[-1].transcript_lines == lines  # what it flagged, it sees again, whole
+    await registry.shutdown()
+
+
+async def test_a_question_that_was_not_asked_does_not_stand_in_the_way_of_benign(
+    make_payload, transcript, out
+):
+    _long_thread(transcript, 22)
+    judge = ScriptedJudge([{"exfil": 0.0}])
+    unasked = Question("against_context", "noul", "i", flag_threshold=0.7, needs_context=True)
+    console = Console(file=out, width=200, color_system=None)
+    registry = SurfaceRegistry([judge], [*QUESTIONS, unasked], Printer(console))
+    await _act(registry, make_payload, 22)
+    assert len(judge.calls[-1].transcript_lines) == 42  # 45 lines, 2 actions now one marker
+    await registry.shutdown()
+
+
+async def test_the_whole_thread_is_sent_when_told_to(make_payload, transcript, out):
+    lines = _long_thread(transcript, 22)
+    judge = ScriptedJudge([{"exfil": 0.0}])
+    console = Console(file=out, width=200, color_system=None)
+    registry = SurfaceRegistry([judge], QUESTIONS, Printer(console), compact=False)
+    await _act(registry, make_payload, 22)
+    assert judge.calls[-1].transcript_lines == lines
+    await registry.shutdown()
+
+
 async def test_judges_only_judging_events_with_raw_transcript(make_payload, out):
     judge = FakeJudge()
     registry = make_registry(judge, out)

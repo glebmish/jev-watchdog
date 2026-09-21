@@ -10,6 +10,8 @@ def test_run_defaults():
     assert args.port == DEFAULT_PORT == 8787
     assert args.judge == ["jev"]
     assert args.claude_thinking is False
+    assert args.compact is True
+    assert build_parser().parse_args(["replay", "x.jsonl", "--no-compact"]).compact is False
     assert args.pack == [Path("pack.toml")]
     assert args.key_file == Path("prototype-throwaway-key")
     assert args.log is None
