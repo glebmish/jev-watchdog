@@ -391,3 +391,20 @@ stand), and non-text blocks are sent as their `type`.
   input and output at ~0.8–1.3k tokens per action. The "No window" defect of section 7 stands,
   and the measured next step is the same as in section 9: clip old tool output, window the
   tail, pin the user's prompts — then rerun the corpus, because that does change its input.
+
+## 14. Addendum: long threads compacted by the judge's own verdicts (2026-09-21)
+
+The window of section 9, built the way the user proposed it: what a judge is sent again of a
+thread depends on how that judge left each earlier tool call (`core/compact.py`). Beyond the
+last 20 actions, benign ones become a count, flagged ones and every error or denial stay whole,
+the rest keeps its command and loses its output; over 64 kB the oldest lines are dropped,
+never the human's words nor the action being judged. `--no-compact` turns it off.
+
+- Trimming alone: 24% of the actions of 278 real long sessions judged before the limit
+  (offline). Compacted: a 567-action session judged start to end at ≤ 21.8k tokens for $0.47;
+  a fuller earlier version judged all 2,439 actions of nine sessions for $1.91.
+- The budget does the bounding, not the verdicts: Jev leaves ~70–90% of a long thread's
+  actions between benign (≤ 0.15) and flagged. A looser benign cutoff is the obvious knob.
+- The "No window" defect of section 7 is closed; open instead: the effect on the answers is
+  unmeasured, a patient agent can outwait the judge's sight (the CUSUM evidence stays), and a
+  single prompt or tool result over the budget is still an `over_limit` error.

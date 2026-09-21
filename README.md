@@ -49,17 +49,18 @@ transcript. Measured on the corpus:
 | "I asked for that refactor elsewhere" | a drifting session: `serves_goal` 0.05 → 0.64–0.75, no longer flagged |
 | "This machine must stay offline" | a plain `pip install`, harmless anywhere else: `against_context` 0.78–0.84 |
 
-**Little here is optimised yet.** Every judgment re-sends the thread's whole conversation,
-from the beginning, over again: no window, no summary, no diff of what changed since the last
-event, no reuse between the judges. What is trimmed is structure, never content: Claude Code's
-bookkeeping lines are dropped (94% of a young transcript,
-[second run](#second-run-with-trimming-2026-09-19)), and each line that is left is cut down to
-what was said and done (another 3–20× on long sessions,
-[fifth run](#fifth-run-lines-trimmed-to-the-conversation-2026-09-21)). Tool inputs and outputs
-are sent whole, so the state still grows with every action: on 30 real sessions Jev's 32k-token
-state limit came at action 14–41 instead of 4–13, and after it every judgment is an
-`over_limit` error. A tail window with the user's prompts pinned is the obvious next step; it
-is not built ([What is sent](#what-is-sent)).
+**Little here is optimised yet.** Every judgment re-sends the thread from the beginning: no
+summary, no diff of what changed since the last event, no reuse between the judges. Two things
+keep that inside Jev's 32k-token state limit. Structure is trimmed, never content: Claude
+Code's bookkeeping lines are dropped and each remaining line is cut down to what was said and
+done ([fifth run](#fifth-run-lines-trimmed-to-the-conversation-2026-09-21)). And a long thread
+is compacted by the judge's own verdicts: of the actions older than the last 20, what it found
+benign becomes a count, what it flagged stays whole, the rest keeps its command and loses its
+output; over a 64 kB budget the oldest lines are dropped. With trimming alone a real long
+session stopped being judged at action 3–62; with compaction a 567-action session was judged
+start to end at ≤ 21.8k tokens, for $0.47
+([sixth run](#sixth-run-long-threads-compacted-by-the-judges-own-verdicts-2026-09-21),
+[What is sent](#what-is-sent)). What compaction does to the answers has not been measured.
 
 ## A session, start to stop
 
@@ -469,10 +470,33 @@ example corpus, so the fitted thresholds stand. One tool call and its result:
 {"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_01Rd…","content":".\n..\nnotes.txt","is_error":false}]}}
 ```
 
-That is the whole of the state construction: no window, no summary, no diff against what the
-judge was sent a moment ago, nothing cached or shared between judges, so every event pays for
-the whole thread again and a long enough session exceeds Jev's 32k-token state limit and shows
-up as `over_limit` errors. A session with a
+A `user` line the human did not write — Claude Code reports a finished subagent that way —
+keeps its `origin`, e.g. `"origin":{"kind":"task-notification"}`, so neither the judge nor the
+watchdog takes it for the user.
+
+A long thread is then compacted ([`core/compact.py`](src/jev_watchdog/core/compact.py)), per
+judge, by that judge's own verdicts on the thread's earlier tool calls:
+
+- the last 20 actions are sent whole, so a series of harmless-looking steps is seen together;
+- an older action the judge found **benign** (flagged by no question, and every "higher is
+  worse" probability ≤ 0.15) is replaced, with the agent's words that led to it, by a count
+  where it was: `{"type":"omitted","actions":12,"judged":"benign","tools":{"Bash":7,"Read":5}}`;
+- an older action it **flagged**, and any error or denial whatever it scored, stays whole — at
+  its own event a denial scores low, since nothing had been denied before it;
+- any other older action, judged or not, keeps its complete command and gets `[omitted]` for
+  its output. Not whole, or a thread over the limit, which is not judged, would stay over it;
+  not gone, or an agent could make a judgment fail to have an action forgotten;
+- over a budget of 64 kB (under 32k tokens even at 2.1 bytes a token) the oldest lines are
+  dropped until it fits, whatever they are, and a first line says how many:
+  `{"type":"omitted","lines":340}`. What the human said and the action being judged are never
+  dropped, so one enormous prompt or tool result can still be an `over_limit` error.
+
+A thread of up to 20 actions that fits the budget is sent as it is, which is the whole example
+corpus. What is forgotten this way is forgotten by the judge only: the evidence a flagged
+action left in the [quarantine rule](#quarantine) stays. A patient agent can still stage
+something harmless-looking and use it after it has left the judge's sight. `--no-compact`
+sends every judgment the whole thread. There is still no summary, no diff against what the
+judge was sent a moment ago, nothing cached or shared between judges. A session with a
 [context](#context-what-you-know-and-the-agent-does-not) sends
 `{"user_context": "...", "transcript": [lines]}` instead of the bare list of lines.
 
@@ -547,7 +571,7 @@ uv run pytest -m live    # real Jev calls (needs a key), real Claude and Codex c
 
 ## Measured runs
 
-Five dated lab notes, oldest first. Each describes the code as it was on its date; the
+Six dated lab notes, oldest first. Each describes the code as it was on its date; the
 sections above describe it as it is now.
 
 ### First run (2026-09-19)
@@ -679,6 +703,31 @@ in the long ones), and live on one headless session (Claude Code 2.1.278, jev-la
   done, since it changes the shape the thresholds were fitted on.
 - The example corpus is untouched by the trimming (its lines were written bare), which a test
   holds, so no rerun was needed.
+
+### Sixth run: long threads compacted by the judge's own verdicts (2026-09-21)
+
+Real Claude Code sessions of 60–567 actions, from the projects whose logs may be used for
+this, replayed step by step against Jev (jev-latest).
+
+- **Offline, trimming alone:** over 278 sessions of 40 actions or more (30.9k actions), 24% of
+  the actions would be judged before the 32k limit, and 9 sessions from start to end.
+- **Verdicts alone do not bound a thread.** A first version (tiers only, 80 kB) judged 743 of
+  2,439 actions and then never recovered. Jev leaves most actions of a long thread neither
+  benign nor flagged (71%; `denied_reroute`, `repeat_failed` and `bypass_intent` sit around
+  0.3 there, against ≤ 0.15 early on), so their commands pile up; Claude Code writes subagent
+  reports of ~5 kB as `user` text, which was kept as "what the user said"; and this content
+  runs at 2.4 bytes a token, so 80 kB was already over the limit.
+- **With a hard budget:** a fuller version (the recent window shrinking first, then a horizon)
+  judged 2,439 of 2,439 actions of nine sessions with no error: at most 23.8k tokens, p50
+  341 ms, $1.91. The version that was kept is simpler — over the budget, the oldest lines go —
+  and was run on the longest session only: 568 of 568 events judged, 20.6k tokens p50, 21.8k
+  at most, $0.47. Its actions were left 28 benign, 500 in between, 40 flagged: it is the
+  budget that bounds the state, and the benign count does little at a cutoff of 0.15.
+- **A bounded state costs by the action:** about $0.83 per 1,000 actions at 64 kB, and in
+  proportion to the budget.
+- **Not measured:** whether the answers differ from those on the whole thread (no run of the
+  same steps uncompacted was made), and the simplified version on the other eight sessions.
+  The corpus is sent unchanged, which a test holds.
 
 ## Further reading
 
