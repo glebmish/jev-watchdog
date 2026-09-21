@@ -7,7 +7,7 @@ from rich.console import Console
 
 from jev_watchdog.core.pack import Question
 from jev_watchdog.core.surfaces import ALL_EVENTS, JUDGING_EVENTS, SurfaceRegistry
-from jev_watchdog.daemon.server import create_app
+from jev_watchdog.daemon.app import create_app
 from jev_watchdog.display.printer import Printer
 from jev_watchdog.judge.fake import FakeJudge
 
@@ -197,7 +197,7 @@ async def test_a_large_tool_call_of_a_quarantined_thread_is_still_denied(
 
 
 async def test_a_body_over_the_limit_is_reported(aiohttp_client, registry, monkeypatch):
-    monkeypatch.setattr("jev_watchdog.daemon.server.MAX_BODY_BYTES", 1024)
+    monkeypatch.setattr("jev_watchdog.daemon.app.MAX_BODY_BYTES", 1024)
     client = await aiohttp_client(create_app(registry))
     response = await client.post("/hooks", json={"padding": "x" * 2048})
     assert response.status == 413

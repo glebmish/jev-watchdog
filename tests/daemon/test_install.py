@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from jev_watchdog.cli import build_parser
-from jev_watchdog.daemon.service import (
+from jev_watchdog.daemon.install import (
     LABEL,
     ServiceError,
     install,
@@ -227,7 +227,7 @@ def test_a_dollar_is_literal_in_an_environment_line_and_doubled_in_a_command():
 def test_a_socket_file_nobody_listens_on_is_not_a_running_watchdog(socket_path):
     import socket
 
-    from jev_watchdog.daemon.service import _came_up
+    from jev_watchdog.daemon.install import _came_up
 
     socket_path.write_text("left by a killed watchdog")
     assert _came_up(socket_path, 0.2) is False

@@ -7,7 +7,7 @@ can be checked.
 
 ## Overview
 
-`jev-watchdog run` is one asyncio process: an aiohttp application (`server.create_app`) with
+`jev-watchdog run` is one asyncio process: an aiohttp application (`app.create_app`) with
 all state in memory in one `SurfaceRegistry`. It binds `127.0.0.1` only: `HOST` in `daemon/serve.py` is
 a constant, and `--port` (default 8787) is the only thing that moves. Next to the port it
 listens on a private unix socket, where `attach` reads what it draws (`state.add_routes`). `install` makes
@@ -18,7 +18,7 @@ Nine are `http` hooks with a 2 s timeout: `UserPromptSubmit`, `PreToolUse`, `Pos
 `SessionStart` cannot use an `http` hook, so it is an `async` command hook that pipes its stdin
 to the same URL with `curl` (2 s limit, no proxy, no output, always exit 0).
 
-Only the hook answer is synchronous. Past the request guard, `server.hooks` answers 200
+Only the hook answer is synchronous. Past the request guard, `app.hooks` answers 200
 whatever happens: an empty body, or the deny body for a `PreToolUse` of a quarantined thread.
 That gate (`SurfaceRegistry._gate`) is a dictionary lookup in `Quarantines.blocking` and
 awaits nothing. A judging event is answered once its transcript is snapshotted (one file read,
@@ -45,12 +45,12 @@ src/jev_watchdog/
     feed.py           ring of display records a dashboard polls
     history.py        evidence per thread, for the charts
   daemon/           running the watchdog and reaching a running one
-    server.py         the port's app: /hooks, control endpoints, request guard
+    app.py            the port's app: /hooks, control endpoints, request guard
     state.py          the socket-only routes a dashboard reads
     serve.py          the two sites, signals, shutdown
     client.py         the one HTTP client
     paths.py          state directory, socket path
-    service.py        install / uninstall: launchd, systemd
+    install.py        install / uninstall: launchd, systemd
   dashboard/        the Textual dashboard
     tui.py            the app, one polling loop, the keys
     draw.py           dicts in, Text and plots out
@@ -61,7 +61,7 @@ tests/              the same tree: tests/core/test_decide.py is for core/decide.
 
 Three programs share the package, and each can be read without the ones below it in this list.
 
-1. **The watchdog core**: `core/*`, `judge/*`, `daemon/server`, `replay`. A hook comes in, is
+1. **The watchdog core**: `core/*`, `judge/*`, `daemon/app`, `replay`. A hook comes in, is
    judged, evidence accumulates, a thread is quarantined, `PreToolUse` is denied. It knows
    nothing of dashboards or services.
 2. **What is shown**: `display/*` (`printer`, `feed`, `history`). The core touches this layer at two seams
@@ -69,9 +69,9 @@ Three programs share the package, and each can be read without the ones below it
    and `History.record` / `History.mark` (called in `SurfaceRegistry._record`, `_add`,
    `release` and `_tripped`). Neither decides anything or is read back by the core.
 3. **Looking and running**: the rest of `daemon/` (`state`, the read routes; `client`; `serve`,
-   the two sites; `service`, launchd / systemd; `paths`) and `dashboard/` (`tui` + `draw`). `client` imports
+   the two sites; `install`, launchd / systemd; `paths`) and `dashboard/` (`tui` + `draw`). `client` imports
    nothing from the package; `tui` and `draw` see only JSON, and import `printer` for the one
-   line renderer (`render_line`, `printable`) and `feed` for the ring's size. `service` imports only `pack`,
+   line renderer (`render_line`, `printable`) and `feed` for the ring's size. `install` imports only `pack`,
    `paths` and `judge/registry`, to check options the way `run` would.
 
 `cli` is the composition root: it parses, builds a registry and hands it to `serve` or
@@ -82,10 +82,10 @@ Three programs share the package, and each can be read without the ones below it
 
 ```text
 Claude Code + plugin/hooks/hooks.json            jev-watchdog status|quarantine|release|context
-  9 http hooks, SessionStart through curl           control.call: GET/POST /quarantine,
+  9 http hooks, SessionStart through curl          client.Client: GET/POST /quarantine,
         |  POST /hooks                              POST /release, POST /context
         v                                                  |
-server.local_clients_only  <-------------------------------+
+app.local_clients_only  <----------------------------------+
   no Origin header, Host is 127.0.0.1|localhost:<port>, POSTs are application/json,
   body <= 64 MiB; otherwise 403 / 415 / 413 and an `error payload` line
         |                                                  |
@@ -114,7 +114,7 @@ replay.run_cases: the same handle(), synthetic payloads over transcript prefixes
 
 Printer._emit: one display record per line --> console (render_line), Feed (ring of 2000),
                                                  run log (the fuller record)
-serve.serve: TCPSite 127.0.0.1:<port>          server.create_app(registry)
+serve.serve: TCPSite 127.0.0.1:<port>          app.create_app(registry)
              UnixSite attach-<port>.sock, 0600: the same app + state.add_routes(app, registry, feed)
                  GET /state     snapshot: threads, statistics, evidence, quarantines
                  GET /records   the feed after ?since, with the process's boot id
@@ -131,7 +131,7 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
 
 | Module | Owns |
 |---|---|
-| `cli` | Arguments, API key, run log (0600), building the registry, dispatch to `serve`, `replay`, `service` and the control calls. |
+| `cli` | Arguments, API key, run log (0600), building the registry, dispatch to `serve`, `replay`, `install` and the control calls. |
 | `replay` | Cuts transcripts into steps, feeds `handle`, checks `.expect.toml`. |
 | `core/transcript` | `SurfaceKey`, transcript paths, bounded read, conversation filter, `tool_result_end`. |
 | `core/pack` | `Question` and the validating TOML pack loader; context wording. |
@@ -148,19 +148,19 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
 | `display/printer` | Display records, `render_line` (console and dashboard), JSONL run log, feed; `printable` makes control characters visible. |
 | `display/feed` | Ring buffer of display records with a rising `seq` and the process's `boot` id. |
 | `display/history` | Last 500 verdicts per thread and judge as shares of each rule's limit; quarantine, release and trip marks; `series` and the bucketed `timeline`. Decides nothing. |
-| `daemon/server` | aiohttp app of the port: `/hooks`, control endpoints, request guard, body cap. Knows nothing of the dashboard. |
+| `daemon/app` | aiohttp app of the port: `/hooks`, control endpoints, request guard, body cap. Knows nothing of the dashboard. |
 | `daemon/state` | What a dashboard reads and its routes (`add_routes`): `snapshot`, `/records`, `/history`, `/timeline`. |
 | `daemon/serve` | The two sites (port, private socket), signals, shutdown order; `dashboard` for `run --tui`, `attach`. |
 | `daemon/client` | `Client`: the one HTTP client, `on_port` for the control subcommands, `on_socket` for the dashboard. |
 | `daemon/paths` | State directory (`$XDG_STATE_HOME/jev-watchdog`), socket path per port, 0700 directory. |
-| `daemon/service` | `install` / `uninstall`: launchd plist, systemd unit, absolute `run` arguments. |
+| `daemon/install` | `install` / `uninstall`: launchd plist, systemd unit, absolute `run` arguments. |
 | `dashboard/tui` | `WatchdogApp` (Textual): the widgets, one polling loop, the keys. |
 | `dashboard/draw` | What the dashboard shows, as pure functions from the watchdog's dicts to `Text` and plots. |
 
 ## Invariants
 
 - **The hook is answered at once; judging is asynchronous.** `SurfaceRegistry.handle` never
-  raises and never awaits a judge. `server.hooks` turns bad JSON and handler exceptions into an
+  raises and never awaits a judge. `app.hooks` turns bad JSON and handler exceptions into an
   empty 200 and a `payload` error.
 - **Per-thread event order is kept.** `Surface.arrival` (a fair asyncio lock) is held from a
   hook's arrival until `_admit`, so a slow read cannot reorder events. `_admit` dispatches
@@ -189,9 +189,9 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
 - **The feed never holds up a hook.** `Feed.publish` appends to a ring and nothing else: there
   are no subscribers to serve. A dashboard asks `/records?since=<its last seq>`.
 - **Session content is not on the port.** `state.add_routes` is called only for the app that
-  `serve.serve` puts on the unix socket (0600, in a 0700 directory); `server.create_app` has no
+  `serve.serve` puts on the unix socket (0600, in a 0700 directory); `app.create_app` has no
   such routes to switch on. The TCP port is bound first; holding it, the process owns that
-  port's socket path and replaces a stale file. On a unix connection `server._refusal` skips
+  port's socket path and replaces a stale file. On a unix connection `app._refusal` skips
   the `Host` check (no port, and no page can open a socket file) and keeps the `Origin` and
   content-type checks. Without a socket `run` carries on and says `attach unavailable`;
   `run --tui` exits 1.
@@ -213,7 +213,7 @@ client.Client --------+-- tui.WatchdogApp, drawn by draw.py (`attach`; `run --tu
   open. It computes nothing: `draw.py` turns the watchdog's dicts into `Text` and plots.
 - **Agent-chosen text reaches the dashboard as `Text` through `printable`**, border titles
   through `textual.markup.escape`, notifications with `markup=False`.
-- **A unit never holds the key.** `service.install` checks what `run` would refuse (packs,
+- **A unit never holds the key.** `install.install` checks what `run` would refuse (packs,
   duplicate judges, a key file for the Jev judge), writes absolute paths and the current
   `PATH`, pins `XDG_STATE_HOME` to the installing shell's (a service sees no shell profile, and
   `paths.socket_path` must give the service and `attach` the same answer), and refuses when
@@ -255,14 +255,14 @@ that day (the `bypassPermissions` row): observed, version-pinned, not re-verifie
 
 | Fact | Where the code deals with it |
 |---|---|
-| `async` applies only to command hooks; `http` hooks are synchronous | `server.hooks` answers at once; judging runs in the `_work` tasks |
+| `async` applies only to command hooks; `http` hooks are synchronous | `app.hooks` answers at once; judging runs in the `_work` tasks |
 | `SessionStart` cannot use an `http` hook | the `curl` command hook in `plugin/hooks/hooks.json`; `tests/test_plugin.py` |
 | `UserPromptSubmit` fires before the transcript is written | `_snapshot` reads a missing file as empty and `_dispatch` only registers; later prompts are judged without the new prompt; `Decider.fold` ignores the event |
 | `PostToolUse` usually arrives before its tool call is in the transcript | `_awaited`, `_caught_up`, `TRANSCRIPT_WAIT_S`, `--transcript-wait` |
 | A tool call Claude Code itself denies fires no hook | not dealt with: the attempt is only history at the next executed action |
 | Subagent payloads carry `agent_id` / `agent_type`; subagents have their own transcript | `transcript.surface_key`, `transcript.resolve_transcript_path`, `_surface_for` |
 | A `PreToolUse` `deny` holds in `bypassPermissions` mode | `Quarantine.deny_body` is the one answer in every mode |
-| A refused connection, a timeout or a non-2xx is non-blocking, so it means allow | always-200 `server.hooks`, `MAX_BODY_BYTES`, the threaded `_snapshot` |
+| A refused connection, a timeout or a non-2xx is non-blocking, so it means allow | always-200 `app.hooks`, `MAX_BODY_BYTES`, the threaded `_snapshot` |
 
 ## External dependencies
 

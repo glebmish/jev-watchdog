@@ -9,7 +9,7 @@ from rich.console import Console
 
 from jev_watchdog.cli import DEFAULT_PORT
 from jev_watchdog.core.surfaces import ALL_EVENTS, SurfaceRegistry
-from jev_watchdog.daemon.server import create_app
+from jev_watchdog.daemon.app import create_app
 from jev_watchdog.display.printer import Printer
 from jev_watchdog.judge.fake import FakeJudge
 

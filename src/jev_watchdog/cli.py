@@ -17,8 +17,8 @@ from rich.console import Console
 
 from jev_watchdog.core.pack import PackError, Question, load_packs
 from jev_watchdog.core.surfaces import TRANSCRIPT_WAIT_S, SurfaceRegistry
-from jev_watchdog.daemon import service
 from jev_watchdog.daemon.client import Client, NotAWatchdog, Refused, Unreachable
+from jev_watchdog.daemon.install import install, uninstall
 from jev_watchdog.daemon.paths import socket_path
 from jev_watchdog.daemon.serve import HOST, attach, dashboard, serve
 from jev_watchdog.display.feed import Feed
@@ -42,21 +42,21 @@ SERVICE_WIDTH = 200
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="jev-watchdog", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    run = commands.add_parser(
+    run_parser = commands.add_parser(
         "run", help="listen for hooks in the foreground and judge every event"
     )
-    run.add_argument(
+    run_parser.add_argument(
         "--tui",
         action="store_true",
         help="show the dashboard of `attach` instead of console lines; leaving it stops the "
         "watchdog",
     )
-    install = commands.add_parser(
+    install_parser = commands.add_parser(
         "install",
         help="run in the background from now on: a launchd agent (macOS) or systemd user "
         "unit (Linux) that runs `run` with these options, starts at login and restarts on a crash",
     )
-    for command in (run, install):
+    for command in (run_parser, install_parser):
         command.add_argument("--port", type=int, default=DEFAULT_PORT)
         command.add_argument(
             "--enforce",
@@ -181,9 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "attach":
         return asyncio.run(attach(args.port))
     if args.command == "install":
-        return service.install(args)
+        return install(args)
     if args.command == "uninstall":
-        return service.uninstall()
+        return uninstall()
     try:
         questions = load_packs(args.pack)
     except (OSError, PackError) as exc:

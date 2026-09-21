@@ -15,9 +15,9 @@ from aiohttp import web
 from rich.console import Console
 
 from jev_watchdog.core.surfaces import SurfaceRegistry
+from jev_watchdog.daemon.app import create_app
 from jev_watchdog.daemon.client import Client, Refused, Unreachable
 from jev_watchdog.daemon.paths import private_dir, socket_path
-from jev_watchdog.daemon.server import create_app
 from jev_watchdog.daemon.state import add_routes
 from jev_watchdog.display.feed import Feed
 from jev_watchdog.display.printer import Printer

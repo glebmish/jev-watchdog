@@ -34,7 +34,7 @@ class Client:
 
     @classmethod
     def on_socket(cls, socket: Path) -> Self:
-        # The Host of a socket request is not checked (server._refusal), but must be there.
+        # The Host of a socket request is not checked (app._refusal), but must be there.
         return cls(aiohttp.UnixConnector(path=str(socket)), "http://localhost")
 
     async def __aenter__(self) -> Self:

@@ -37,11 +37,11 @@ agent. Only the latest commit on `main` is supported.
 ## In scope: a bypass of any of these is a bug worth reporting
 
 - A browser reaching the server: requests with an `Origin` header, a foreign `Host` or a
-  non-JSON POST are refused (`server._refusal`), against cross-site posts and DNS rebinding.
+  non-JSON POST are refused (`app._refusal`), against cross-site posts and DNS rebinding.
 - The server binding to anything but loopback (`HOST` in `daemon/serve.py`).
 - Any route of `state.add_routes` answering on the TCP port, or the attach socket or its
   directory being open to other users (`serve.serve`, `paths.private_dir`).
-- The TypeSafe API key reaching a launchd or systemd unit (`service.install`).
+- The TypeSafe API key reaching a launchd or systemd unit (`install.install`).
 - Agent-chosen text reaching the dashboard as terminal escapes or as markup (`tui`).
 - The TypeSafe API key reaching the run log, the console or a judge's child process.
 - A judge session gaining tools, MCP servers, settings or hooks.
