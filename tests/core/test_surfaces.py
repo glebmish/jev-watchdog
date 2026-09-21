@@ -99,7 +99,7 @@ async def test_a_judge_is_not_sent_again_the_old_actions_it_found_benign(
     calm, wary = ScriptedJudge([{"exfil": 0.0}], "calm"), ScriptedJudge([{"exfil": 0.9}], "wary")
     registry = make_registry(calm, out, wary)
     await _act(registry, make_payload, 22)
-    marker = '{"type":"omitted","judged":"benign","actions":2,"tools":{"Bash":2}}'
+    marker = '{"type":"omitted","actions":2,"judged":"benign","tools":{"Bash":2}}'
     assert calm.calls[-1].transcript_lines == [lines[0], marker, *lines[5:]]
     assert wary.calls[-1].transcript_lines == lines  # what it flagged, it sees again, whole
     await registry.shutdown()

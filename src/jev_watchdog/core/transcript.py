@@ -85,7 +85,7 @@ def _is_conversation(line: str) -> bool:
 
 
 def trimmed_lines(lines: list[str]) -> list[str]:
-    """Conversation lines with only what was said and done left in each.
+    """Conversation lines with only what was said and done left in each, and by whom.
 
     A Claude Code line is mostly not conversation: the envelope (uuids, cwd, version), token
     usage, the signature of each thinking block, a second copy of every tool result
@@ -117,6 +117,11 @@ def _trim(line: str) -> str | None:
         "type": entry.get("type"),
         "message": {key: value for key, value in kept.items() if key in message},
     }
+    # Claude Code also writes as the user what the human did not say, e.g. a subagent's
+    # report (task-notification). The judge should know, and so should compact.
+    origin = entry.get("origin")
+    if isinstance(origin, dict) and origin.get("kind") != "human":
+        trimmed["origin"] = {"kind": origin.get("kind")}
     if trimmed == entry:
         return line
     return json.dumps(trimmed, ensure_ascii=False, separators=(",", ":"))

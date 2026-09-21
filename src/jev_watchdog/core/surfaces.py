@@ -105,9 +105,9 @@ class Surface:
     # overtake an earlier one.
     arrival: asyncio.Lock = field(default_factory=asyncio.Lock)
     backlog: int = 0
-    # How each judge left the tool calls it judged, by judge name and tool_use_id: True benign,
-    # False flagged. It decides what that judge is sent of the thread again (compact).
-    standings: dict[str, dict[str, bool]] = field(default_factory=dict)
+    # How each judge left the tool calls it judged (compact.standing), by judge name and
+    # tool_use_id. It decides what that judge is sent of the thread again.
+    standings: dict[str, dict[str, str]] = field(default_factory=dict)
     label_override: str | None = None  # replayed cases are named, not truncated ids
     # For whoever looks at the watchdog (state.snapshot): which threads are alive.
     last_event: str | None = None
@@ -462,7 +462,9 @@ class SurfaceRegistry:
         # answered for every earlier event of the thread.
         lines = job.transcript_lines
         if self.compact:
-            lines = compacted(lines, surface.standings.get(judge.name, {}))
+            # In a thread, like the snapshot: a long thread is megabytes of JSON to parse.
+            standings = dict(surface.standings.get(judge.name, {}))
+            lines = await asyncio.to_thread(compacted, lines, standings)
         request = JudgeRequest(surface.key, job.event, lines, questions, job.context)
         try:
             verdict = await judge.judge(request)
@@ -479,8 +481,8 @@ class SurfaceRegistry:
         step = job.event.get("replay_step")
         self.printer.verdict(surface.label, judge.name, verdict, flagged, step, job.context)
         tool_use_id = job.event.get("tool_use_id")
-        left = standing(self._asked(job), verdict)
-        if job.event.get("hook_event_name") in TOOL_EVENTS and tool_use_id and left is not None:
+        if job.event.get("hook_event_name") in TOOL_EVENTS and tool_use_id:
+            left = standing(self._asked(job), verdict)
             surface.standings.setdefault(judge.name, {}).setdefault(tool_use_id, left)
         trip = self.decider.fold(surface.key, judge.name, job.event, verdict)
         self.history.record(

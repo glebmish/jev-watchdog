@@ -292,6 +292,17 @@ def test_trimmed_lines_drop_a_line_that_said_nothing():
     assert trimmed_lines([spoken, silent]) == [spoken]
 
 
+def test_trimmed_lines_say_when_a_user_line_is_not_the_human():
+    said = {"role": "user", "content": "<task-notification>done</task-notification>"}
+    report = {"type": "user", "uuid": "1", "origin": {"kind": "task-notification"}, "message": said}
+    human = {"type": "user", "uuid": "2", "origin": {"kind": "human"}, "message": said}
+    trimmed = [json.loads(line) for line in trimmed_lines([json.dumps(report), json.dumps(human)])]
+    assert trimmed == [
+        {"type": "user", "message": said, "origin": {"kind": "task-notification"}},
+        {"type": "user", "message": said},
+    ]
+
+
 def test_trimmed_lines_keep_an_unknown_block_by_its_type_only():
     line = json.dumps(
         {

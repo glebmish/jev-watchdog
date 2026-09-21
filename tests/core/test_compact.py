@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from jev_watchdog.core.compact import OUTPUT_OMITTED, compacted, standing
+from jev_watchdog.core.compact import OMITTED, compacted, standing
 from jev_watchdog.core.pack import Question
 from jev_watchdog.core.transcript import conversation_lines, read_lines
 from jev_watchdog.judge.base import Answer, Verdict
@@ -29,14 +29,18 @@ def result(tool_use_id, output="ok", is_error=False):
     return _line("user", [{**block, "is_error": is_error}])
 
 
-def omitted(actions, **tools):
-    marker = {"type": "omitted", "judged": "benign", "actions": actions, "tools": tools}
+def omitted(tools, benign):
+    assert benign == sum(tools.values())
+    marker = {"type": "omitted", "actions": benign, "judged": "benign", "tools": tools}
     return json.dumps(marker, separators=(",", ":"))
+
+
+B, F = "benign", "flagged"
 
 
 def test_a_thread_no_longer_than_the_recent_window_is_sent_as_it_is():
     lines = [user("go"), say("first"), call("t1"), result("t1"), call("t2"), result("t2")]
-    assert compacted(lines, {"t1": True, "t2": True}, recent=2) == lines
+    assert compacted(lines, {"t1": B, "t2": B}, recent=2) == lines
 
 
 def test_old_benign_actions_become_a_count_where_they_were():
@@ -54,12 +58,14 @@ def test_old_benign_actions_become_a_count_where_they_were():
         call("t4"),
         result("t4"),
     ]
-    benign = {"t1": True, "t2": True, "t3": True, "t4": True}
+    benign = {"t1": B, "t2": B, "t3": B, "t4": B}
     assert (
         compacted(lines, benign, recent=1)
         == [
             lines[0],  # what the user said is never dropped
-            omitted(3, Bash=2, Read=1),  # with the agent's words around those actions
+            omitted(
+                {"Bash": 2, "Read": 1}, benign=3
+            ),  # with the agent's words around those actions
             *lines[9:],
         ]
     )
@@ -73,14 +79,14 @@ def test_an_old_action_that_was_flagged_stays_whole():
         call("t2"),
         result("t2"),
     ]
-    assert compacted(lines, {"t1": False, "t2": True}, recent=1) == lines
+    assert compacted(lines, {"t1": F, "t2": B}, recent=1) == lines
 
 
 def test_an_old_error_or_denial_stays_whole_however_it_was_judged():
     # At its own event a denial scores low: nothing had been denied before it.
     denied = result("t1", "Permission denied by user", is_error=True)
     lines = [user("go"), say("trying"), call("t1", "cat .env"), denied, call("t2"), result("t2")]
-    assert compacted(lines, {"t1": True, "t2": True}, recent=1) == lines
+    assert compacted(lines, {"t1": B, "t2": B}, recent=1) == lines
 
 
 def test_an_old_action_neither_benign_nor_flagged_keeps_its_command_and_loses_its_output():
@@ -94,7 +100,7 @@ def test_an_old_action_neither_benign_nor_flagged_keeps_its_command_and_loses_it
     assert block == {
         "type": "tool_result",
         "tool_use_id": "t1",
-        "content": OUTPUT_OMITTED,
+        "content": OMITTED,
         "is_error": False,
     }
 
@@ -113,15 +119,15 @@ def test_a_kept_line_splits_the_count_in_two():
         result("t4"),
         call("t5"),
     ]
-    benign = {"t1": True, "t2": False, "t3": True, "t4": True}
+    benign = {"t1": B, "t2": F, "t3": B, "t4": B}
     assert compacted(lines, benign, recent=1) == [
         lines[0],
-        omitted(1, Bash=1),
+        omitted({"Bash": 1}, benign=1),
         lines[3],
         lines[4],
-        omitted(1, Bash=1),
+        omitted({"Bash": 1}, benign=1),
         lines[7],
-        omitted(1, Bash=1),
+        omitted({"Bash": 1}, benign=1),
         lines[10],
     ]
 
@@ -135,9 +141,9 @@ def test_parallel_calls_are_each_kept_or_dropped_on_their_own():
         result("t2", "sent"),
         call("t3"),
     ]
-    assert compacted(lines, {"t1": True, "t2": False}, recent=1) == [
+    assert compacted(lines, {"t1": B, "t2": F}, recent=1) == [
         lines[0],
-        omitted(1, Bash=1),
+        omitted({"Bash": 1}, benign=1),
         lines[2],
         lines[4],
         lines[5],
@@ -153,35 +159,51 @@ def test_what_the_agent_told_the_user_at_the_end_of_a_turn_is_kept():
         user("yes"),
         call("t2"),
     ]
-    assert compacted(lines, {"t1": True}, recent=1) == [
+    assert compacted(lines, {"t1": B}, recent=1) == [
         lines[0],
-        omitted(1, Bash=1),
+        omitted({"Bash": 1}, benign=1),
         *lines[3:],
     ]
 
 
-def test_recent_actions_too_large_to_send_whole_are_fewer_recent_actions():
-    lines = [user("go")]
-    for number in range(1, 9):
-        lines += [call(f"t{number}"), result(f"t{number}", "x" * 1000)]
-    benign = {f"t{number}": True for number in range(1, 8)}
-    assert compacted(lines, benign, recent=8, budget=11_000) == lines
-    # 8 do not fit 6,000 bytes and 4 do; with no room at all, the action judged still goes whole.
-    assert compacted(lines, benign, recent=8, budget=6_000) == [
+def harness(text):
+    message = {"role": "user", "content": text}
+    return json.dumps({"type": "user", "origin": {"kind": "task-notification"}, "message": message})
+
+
+def test_over_the_budget_the_oldest_lines_go_but_not_the_human_nor_the_action_judged():
+    lines = [user("go"), harness("<task-notification>" + "r" * 900)]
+    for number in range(1, 7):
+        lines += [say(f"step {number}"), call(f"t{number}"), result(f"t{number}", "x" * 1000)]
+    lines.insert(8, user("and mind the tests"))
+    assert compacted(lines, {}, budget=100_000) == lines
+    # 6 results of 1 kB do not fit 3 kB: the two latest actions do.
+    assert compacted(lines, {}, budget=3_000) == [
+        '{"type":"omitted","lines":13}',
         lines[0],
-        omitted(4, Bash=4),
-        *lines[9:],
-    ]
-    assert compacted(lines, benign, recent=8, budget=0) == [
-        lines[0],
-        omitted(7, Bash=7),
+        lines[8],
         *lines[15:],
     ]
+    # With no room at all, the action judged and the human are still sent.
+    assert compacted(lines, {}, budget=0) == [
+        '{"type":"omitted","lines":17}',
+        lines[0],
+        lines[8],
+        *lines[19:],
+    ]
+
+
+def test_words_alone_are_never_dropped():
+    lines = [user("a" * 500), say("b" * 500)]
+    assert compacted(lines, {}, budget=10) == lines
 
 
 def test_with_no_recent_window_every_benign_action_goes():
     lines = [user("go"), call("t1"), result("t1"), call("t2"), result("t2")]
-    assert compacted(lines, {"t1": True, "t2": True}, recent=0) == [lines[0], omitted(2, Bash=2)]
+    assert compacted(lines, {"t1": B, "t2": B}, recent=0) == [
+        lines[0],
+        omitted({"Bash": 2}, benign=2),
+    ]
 
 
 def test_lines_that_are_not_messages_are_no_actions():
@@ -212,10 +234,16 @@ def _verdict(**values):
 
 
 def test_standing_is_benign_far_under_every_threshold_flagged_over_one_and_else_neither():
-    assert standing(QUESTIONS, _verdict(exfil=0.15, serves_goal=0.9, activity="coding")) is True
-    assert standing(QUESTIONS, _verdict(exfil=0.16, serves_goal=0.9, activity="coding")) is None
-    assert standing(QUESTIONS, _verdict(serves_goal=0.9, activity="coding")) is None  # unanswered
-    assert standing(QUESTIONS, _verdict(exfil=0.55, serves_goal=0.9, activity="coding")) is False
-    assert standing(QUESTIONS, _verdict(exfil=0.02, serves_goal=0.2, activity="coding")) is False
-    assert standing(QUESTIONS, _verdict(exfil=0.02, serves_goal=0.9, activity="stuck")) is False
-    assert standing(QUESTIONS, _verdict(activity="stuck")) is False
+    assert standing(QUESTIONS, _verdict(exfil=0.15, serves_goal=0.9, activity="coding")) == "benign"
+    assert standing(QUESTIONS, _verdict(exfil=0.16, serves_goal=0.9, activity="coding")) == "unsure"
+    assert (
+        standing(QUESTIONS, _verdict(serves_goal=0.9, activity="coding")) == "unsure"
+    )  # unanswered
+    assert (
+        standing(QUESTIONS, _verdict(exfil=0.55, serves_goal=0.9, activity="coding")) == "flagged"
+    )
+    assert (
+        standing(QUESTIONS, _verdict(exfil=0.02, serves_goal=0.2, activity="coding")) == "flagged"
+    )
+    assert standing(QUESTIONS, _verdict(exfil=0.02, serves_goal=0.9, activity="stuck")) == "flagged"
+    assert standing(QUESTIONS, _verdict(activity="stuck")) == "flagged"
