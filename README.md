@@ -165,6 +165,19 @@ In another terminal, start Claude Code with the hooks plugin:
 claude --plugin-dir /path/to/jev-watchdog/plugin
 ```
 
+That covers one session. For every Claude Code session on the machine, install the plugin
+from the marketplace this repo is (`.claude-plugin/marketplace.json`, one plugin):
+
+```bash
+claude plugin marketplace add /path/to/jev-watchdog
+claude plugin install jev-watchdog-hooks@jev-watchdog
+```
+
+Claude Code runs an installed plugin from its own copy, so after a change to
+`plugin/hooks/hooks.json` run `claude plugin update jev-watchdog-hooks@jev-watchdog`. Together
+with [`install`](#in-the-background-install-and-attach) this puts the watchdog in front of
+everything you run; read the privacy note above before doing that.
+
 If the watchdog is not running the hooks fail silently and Claude Code is unaffected.
 `Ctrl-C` prints per-surface and global statistics. Every event, verdict and error
 is also appended to `runs/<timestamp>.jsonl` (created `0600`; if writing it fails, that is

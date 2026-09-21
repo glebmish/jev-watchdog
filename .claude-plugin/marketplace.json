@@ -1,0 +1,18 @@
+{
+  "name": "jev-watchdog",
+  "owner": {
+    "name": "glebmish",
+    "url": "https://github.com/glebmish"
+  },
+  "metadata": {
+    "description": "The Claude Code hooks that feed a local jev-watchdog.",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "jev-watchdog-hooks",
+      "source": "./plugin",
+      "description": "Forwards Claude Code hook events to a local jev-watchdog on 127.0.0.1:8787. PreToolUse lets it reject tool calls of quarantined threads. Does nothing when no watchdog is listening."
+    }
+  ]
+}

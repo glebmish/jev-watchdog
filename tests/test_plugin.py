@@ -31,6 +31,14 @@ def test_plugin_manifest():
     assert "observe-only" not in manifest["description"].lower()
 
 
+def test_the_marketplace_offers_the_plugin_as_the_plugin_describes_itself():
+    marketplace = json.loads((PLUGIN.parent / ".claude-plugin" / "marketplace.json").read_text())
+    manifest = json.loads((PLUGIN / ".claude-plugin" / "plugin.json").read_text())
+    [entry] = marketplace["plugins"]
+    assert (PLUGIN.parent / entry["source"]).resolve() == PLUGIN
+    assert (entry["name"], entry["description"]) == (manifest["name"], manifest["description"])
+
+
 def test_hooks_cover_exactly_the_handled_events():
     assert set(handlers()) == ALL_EVENTS
 

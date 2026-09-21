@@ -1,5 +1,9 @@
 {
   "name": "jev-watchdog-hooks",
   "version": "0.1.0",
-  "description": "Forwards Claude Code hook events to a local jev-watchdog on 127.0.0.1:8787. PreToolUse lets it reject tool calls of quarantined threads. Does nothing when no watchdog is listening."
+  "description": "Forwards Claude Code hook events to a local jev-watchdog on 127.0.0.1:8787. PreToolUse lets it reject tool calls of quarantined threads. Does nothing when no watchdog is listening.",
+  "author": {
+    "name": "glebmish",
+    "url": "https://github.com/glebmish"
+  }
 }
