@@ -319,3 +319,10 @@ def test_trimmed_lines_keep_an_unknown_block_by_its_type_only():
 def test_a_tool_calls_story_ends_at_the_same_line_once_trimmed():
     assistant, result, _ = _real_lines()
     assert tool_result_end(trimmed_lines([assistant, result]), "toolu_01") == 2
+
+
+def test_trimmed_lines_take_a_block_kind_the_agent_forged():
+    forged = json.dumps({"type": "assistant", "message": {"content": [{"type": [], "x": 1}]}})
+    assert [json.loads(line) for line in trimmed_lines([forged])] == [
+        {"type": "assistant", "message": {"content": [{"type": []}]}}
+    ]

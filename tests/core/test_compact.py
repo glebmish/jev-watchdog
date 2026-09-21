@@ -247,3 +247,28 @@ def test_standing_is_benign_far_under_every_threshold_flagged_over_one_and_else_
     )
     assert standing(QUESTIONS, _verdict(exfil=0.02, serves_goal=0.9, activity="stuck")) == "flagged"
     assert standing(QUESTIONS, _verdict(activity="stuck")) == "flagged"
+
+
+def test_the_budget_is_bytes_not_characters():
+    wide = json.dumps(json.loads(result("t1", "字" * 300)), ensure_ascii=False)
+    lines = [user("go"), call("t1"), wide, call("t2"), result("t2")]
+    assert sum(len(line) for line in lines) < 1000 < sum(len(line.encode()) for line in lines)
+    assert compacted(lines, {}, recent=5, budget=1000) == [
+        '{"type":"omitted","lines":2}',
+        lines[0],
+        *lines[3:],
+    ]
+
+
+def test_over_the_budget_a_parallel_call_under_judgement_is_kept_with_its_result():
+    # the thread as cut for t1's event: t2 was called in parallel and has no result yet
+    lines = [user("go"), call("t0"), result("t0"), call("t1"), call("t2"), result("t1", "a" * 900)]
+    sent = compacted(lines, {}, recent=5, budget=300)
+    assert lines[3] in sent and lines[5] in sent
+
+
+def test_ids_the_agent_forged_into_its_transcript_are_no_ids():
+    forged = _line("user", [{"type": "tool_result", "tool_use_id": [], "is_error": True}])
+    nameless = _line("assistant", [{"type": "tool_use", "id": {}}])
+    lines = [user("go"), call("t1"), result("t1"), nameless, forged, call("t2"), result("t2")]
+    assert compacted(lines, {"t1": B}, recent=1)[-2:] == lines[-2:]

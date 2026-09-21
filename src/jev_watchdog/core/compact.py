@@ -47,16 +47,20 @@ def compacted(
     """The lines to send, given the standing of the tool calls judged so far, by id."""
     entries = [json.loads(line) for line in lines]
     calls = [index for index, entry in enumerate(entries) if _blocks(entry, "tool_use")]
-    judged_from = calls[-1] if calls else 0  # the action being judged, and what follows it
     sent = _by_standing(lines, entries, calls, standings, recent)
-    excess = sum(len(line) for _, line in sent) - budget
+    excess = sum(_size(line) for _, line in sent) - budget
     if excess <= 0:
         result = [line for _, line in sent]
         return lines if result == lines else result
+    # The action being judged, and what follows it. Calls made in parallel with it are lines
+    # of their own next to it, and the event's may be any of them.
+    judged_from = calls[-1] if calls else 0
+    while judged_from - 1 in calls:
+        judged_from -= 1
     kept, dropped = [], 0
     for index, line in sent:
         if excess > 0 and index < judged_from and not _said_by_human(entries[index]):
-            excess -= len(line)
+            excess -= _size(line)
             dropped += 1
         else:
             kept.append(line)
@@ -75,14 +79,14 @@ def _by_standing(
         return list(enumerate(lines))
     cut = calls[-recent] if recent else len(lines)
     failed = {
-        block.get("tool_use_id")
+        _id(block, "tool_use_id")
         for entry in entries
         for block in _blocks(entry, "tool_result")
         if block.get("is_error")
     }
 
     def gone(entry: dict) -> bool:
-        ids = [block.get("id") for block in _blocks(entry, "tool_use")]
+        ids = [_id(block, "id") for block in _blocks(entry, "tool_use")]
         return all(standings.get(i) == BENIGN and i not in failed for i in ids)
 
     sent: list[tuple[int, str]] = []
@@ -104,7 +108,7 @@ def _by_standing(
         if used := _blocks(entry, "tool_use"):
             if gone(entry):
                 first_dropped = first_dropped if dropped else index
-                dropped.update(block.get("name", "?") for block in used)
+                dropped.update(str(block.get("name", "?")) for block in used)
             else:
                 send(index, line)
         elif _blocks(entry, "tool_result"):
@@ -130,7 +134,7 @@ def _results(line: str, entry: dict, standings: Mapping[str, str], failed: set) 
         if not (isinstance(block, dict) and block.get("type") == "tool_result"):
             blocks.append(block)
             continue
-        tool_use_id = block.get("tool_use_id")
+        tool_use_id = _id(block, "tool_use_id")
         left = standings.get(tool_use_id)
         if left == FLAGGED or tool_use_id in failed:
             blocks.append(block)
@@ -141,6 +145,16 @@ def _results(line: str, entry: dict, standings: Mapping[str, str], failed: set) 
     if not blocks:
         return None
     return _dumps({**entry, "message": {**entry["message"], "content": blocks}})
+
+
+def _id(block: dict, key: str) -> str | None:
+    """The transcript is the agent's to write: an id that is no string is no id."""
+    value = block.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _size(line: str) -> int:
+    return len(line.encode())
 
 
 def _dumps(entry: dict) -> str:

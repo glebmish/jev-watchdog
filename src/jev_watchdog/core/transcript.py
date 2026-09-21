@@ -138,7 +138,9 @@ def _trim_blocks(content: object) -> object:
         kind = block.get("type")
         if kind in ("thinking", "redacted_thinking") and not block.get("thinking"):
             continue  # a signature or an encrypted blob: nothing the agent is seen to think
-        kept = {key: block[key] for key in BLOCK_KEYS.get(kind, ("type",)) if key in block}
+        # The transcript is the agent's to write: a kind may be anything, a list included.
+        keys = BLOCK_KEYS.get(kind, ("type",)) if isinstance(kind, str) else ("type",)
+        kept = {key: block[key] for key in keys if key in block}
         if "content" in kept:
             kept["content"] = _trim_blocks(kept["content"])
         blocks.append(kept)

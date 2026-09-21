@@ -461,12 +461,12 @@ class SurfaceRegistry:
         # Here and not at the snapshot: the worker is serial, so by now this judge has
         # answered for every earlier event of the thread.
         lines = job.transcript_lines
-        if self.compact:
-            # In a thread, like the snapshot: a long thread is megabytes of JSON to parse.
-            standings = dict(surface.standings.get(judge.name, {}))
-            lines = await asyncio.to_thread(compacted, lines, standings)
-        request = JudgeRequest(surface.key, job.event, lines, questions, job.context)
         try:
+            if self.compact:
+                # In a thread, like the snapshot: a long thread is megabytes of JSON to parse.
+                standings = dict(surface.standings.get(judge.name, {}))
+                lines = await asyncio.to_thread(compacted, lines, standings)
+            request = JudgeRequest(surface.key, job.event, lines, questions, job.context)
             verdict = await judge.judge(request)
             self._record(surface, judge, job, verdict)
         except JudgeError as exc:
