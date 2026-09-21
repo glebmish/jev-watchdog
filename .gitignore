@@ -47,3 +47,7 @@ Thumbs.db
 
 # which real session logs may be used for evaluation; names private projects
 eval-projects.toml
+
+# real session transcripts; only the synthetic examples are tracked
+*.jsonl
+!examples/*.jsonl
